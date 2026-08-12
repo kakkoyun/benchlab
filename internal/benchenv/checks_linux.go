@@ -4,33 +4,32 @@ package benchenv
 
 import (
 	"fmt"
-	"os"
-	"runtime"
 	"strings"
 )
 
-// platformChecks returns Linux-specific diagnostic checks.
-func platformChecks() []Check {
-	return []Check{
-		checkSMT(),
-		checkGovernor(),
-		checkTurbo(),
-		checkLoadAvgLinux(),
-		checkContainer(),
-	}
+// linuxChecks returns Linux-specific checks tailored to the detected
+// architecture and virtualization vendor.
+func (p *prober) platformChecks(plat Platform) []Check {
+	var checks []Check
+	checks = append(checks, p.checkSMT(plat))
+	checks = append(checks, p.checkGovernor(plat))
+	checks = append(checks, p.checkTurbo(plat))
+	checks = append(checks, p.checkLoadAvgLinux(plat))
+	checks = append(checks, p.checkContainer(plat))
+	return checks
 }
 
-func checkSMT() Check {
+func (p *prober) checkSMT(plat Platform) Check {
 	const path = "/sys/devices/system/cpu/smt/control"
-	data, err := os.ReadFile(path)
+	data, err := p.fs.ReadFile(path)
 	if err != nil {
 		return Check{
 			Name:   "SMT control",
 			Status: StatusUnavailable,
-			Detail: fmt.Sprintf("cannot read %s: %v (may be a VM or single-core CPU)", path, err),
+			Detail: fmt.Sprintf("cannot read %s: %v (may be a VM, single-core CPU, or ARM without SMT)", path, err),
 		}
 	}
-	status, detail, remedy := smtResult(strings.TrimSpace(string(data)))
+	status, detail, remedy := smtResult(strings.TrimSpace(data))
 	return Check{
 		Name:   "SMT control",
 		Status: status,
@@ -39,9 +38,9 @@ func checkSMT() Check {
 	}
 }
 
-func checkGovernor() Check {
+func (p *prober) checkGovernor(plat Platform) Check {
 	const path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
-	data, err := os.ReadFile(path)
+	data, err := p.fs.ReadFile(path)
 	if err != nil {
 		return Check{
 			Name:   "CPU frequency governor",
@@ -49,7 +48,7 @@ func checkGovernor() Check {
 			Detail: fmt.Sprintf("cannot read %s: %v (cpufreq driver may not be loaded, or running in a VM)", path, err),
 		}
 	}
-	status, detail, remedy := governorResult(strings.TrimSpace(string(data)))
+	status, detail, remedy := governorResult(strings.TrimSpace(data))
 	return Check{
 		Name:   "CPU frequency governor",
 		Status: status,
@@ -58,10 +57,19 @@ func checkGovernor() Check {
 	}
 }
 
-func checkTurbo() Check {
+func (p *prober) checkTurbo(plat Platform) Check {
+	// ARM64 does not use Intel/AMD pstate drivers; skip x86-specific knobs.
+	if plat.Arch == "arm64" {
+		return Check{
+			Name:   "CPU boost/turbo",
+			Status: StatusUnavailable,
+			Detail: "ARM64 CPUs do not expose Intel/AMD pstate turbo knobs; frequency control depends on the SoC driver",
+		}
+	}
+
 	// Intel pstate driver.
 	const intelPath = "/sys/devices/system/cpu/intel_pstate/no_turbo"
-	if data, err := os.ReadFile(intelPath); err == nil {
+	if data, err := p.fs.ReadFile(intelPath); err == nil {
 		status, detail, remedy := turboIntelResult(strings.TrimSpace(string(data)))
 		return Check{
 			Name:   "Turbo Boost (Intel)",
@@ -73,7 +81,7 @@ func checkTurbo() Check {
 
 	// AMD cpufreq boost knob.
 	const amdPath = "/sys/devices/system/cpu/cpufreq/boost"
-	if data, err := os.ReadFile(amdPath); err == nil {
+	if data, err := p.fs.ReadFile(amdPath); err == nil {
 		status, detail, remedy := turboAMDResult(strings.TrimSpace(string(data)))
 		return Check{
 			Name:   "Turbo Boost (AMD)",
@@ -90,9 +98,9 @@ func checkTurbo() Check {
 	}
 }
 
-func checkLoadAvgLinux() Check {
+func (p *prober) checkLoadAvgLinux(plat Platform) Check {
 	const path = "/proc/loadavg"
-	data, err := os.ReadFile(path)
+	data, err := p.fs.ReadFile(path)
 	if err != nil {
 		return Check{
 			Name:   "load average",
@@ -100,7 +108,7 @@ func checkLoadAvgLinux() Check {
 			Detail: fmt.Sprintf("cannot read %s: %v", path, err),
 		}
 	}
-	load, err := parseLoadAvg(strings.TrimSpace(string(data)))
+	load, err := parseLoadAvg(strings.TrimSpace(data))
 	if err != nil {
 		return Check{
 			Name:   "load average",
@@ -108,7 +116,7 @@ func checkLoadAvgLinux() Check {
 			Detail: fmt.Sprintf("parse error: %v", err),
 		}
 	}
-	status, detail, remedy := loadAvgResult(load, runtime.NumCPU())
+	status, detail, remedy := loadAvgResult(load, p.numCPU)
 	return Check{
 		Name:   "load average",
 		Status: status,
@@ -117,30 +125,14 @@ func checkLoadAvgLinux() Check {
 	}
 }
 
-func checkContainer() Check {
-	// Docker leaves a marker file at the root.
-	if _, err := os.Stat("/.dockerenv"); err == nil {
+func (p *prober) checkContainer(plat Platform) Check {
+	if plat.Containerized {
 		return Check{
 			Name:   "container environment",
 			Status: StatusOK,
-			Detail: "running inside Docker — use --cpuset-cpus and --cpus to pin and cap resources",
+			Detail: "running inside a container — use --cpuset-cpus and --cpus to pin and cap resources",
 		}
 	}
-
-	// cgroup v1/v2: check for container runtime hints in /proc/1/cgroup.
-	if data, err := os.ReadFile("/proc/1/cgroup"); err == nil {
-		content := string(data)
-		for _, hint := range []string{"docker", "containerd", "kubepods", "lxc"} {
-			if strings.Contains(content, hint) {
-				return Check{
-					Name:   "container environment",
-					Status: StatusOK,
-					Detail: fmt.Sprintf("running inside a container (%s cgroup hint) — use --cpuset-cpus to pin resources", hint),
-				}
-			}
-		}
-	}
-
 	return Check{
 		Name:   "container environment",
 		Status: StatusOK,

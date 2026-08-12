@@ -8,15 +8,6 @@ import (
 	"strings"
 )
 
-// CollectChecks gathers all checks: platform-specific first, then cross-platform tools, then runtime info.
-func CollectChecks() []Check {
-	var checks []Check
-	checks = append(checks, platformChecks()...)
-	checks = append(checks, toolChecks()...)
-	checks = append(checks, runtimeInfoCheck())
-	return checks
-}
-
 // toolChecks returns cross-platform tool availability checks.
 func toolChecks() []Check {
 	return []Check{
@@ -44,8 +35,7 @@ func checkTool(name, remedy string) Check {
 }
 
 // runtimeInfoCheck reports GOMAXPROCS and NumCPU as an informational check.
-func runtimeInfoCheck() Check {
-	numCPU := runtime.NumCPU()
+func runtimeInfoCheck(numCPU int) Check {
 	maxProcs := runtime.GOMAXPROCS(0)
 	detail := fmt.Sprintf("NumCPU=%d GOMAXPROCS=%d", numCPU, maxProcs)
 	if maxProcs < numCPU {
