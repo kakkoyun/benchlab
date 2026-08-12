@@ -34,6 +34,13 @@ func newMockGitHub(t *testing.T, artifactZip []byte) *mockGitHub {
 	return m
 }
 
+// botComment creates a Comment with User.Type="Bot" for sticky comment tests.
+func botComment(id int64, body string) Comment {
+	c := Comment{ID: id, Body: body}
+	c.User.Type = "Bot"
+	return c
+}
+
 func (m *mockGitHub) close() { m.server.Close() }
 
 func (m *mockGitHub) handle(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +69,7 @@ func (m *mockGitHub) handle(w http.ResponseWriter, r *http.Request) {
 			body, _ := io.ReadAll(r.Body)
 			var c struct{ Body string }
 			json.Unmarshal(body, &c)
-			m.comments = append(m.comments, Comment{ID: int64(len(m.comments) + 1), Body: c.Body})
+			m.comments = append(m.comments, botComment(int64(len(m.comments)+1), c.Body))
 			w.WriteHeader(http.StatusCreated)
 		}
 
@@ -366,7 +373,7 @@ func TestPostOrUpdateComment_CreatesNew(t *testing.T) {
 func TestPostOrUpdateComment_UpdatesExisting(t *testing.T) {
 	m := newMockGitHub(t, nil)
 	defer m.close()
-	m.comments = []Comment{{ID: 5, Body: HiddenMarker + "\n\nold comment"}}
+	m.comments = []Comment{botComment(5, HiddenMarker+"\n\nold comment")}
 	client := newTestClient(m)
 
 	if err := client.PostOrUpdateComment(42, HiddenMarker+"\n\nnew comment"); err != nil {

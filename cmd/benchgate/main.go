@@ -246,7 +246,9 @@ func runCompare(args []string) int {
 		// Operational error but we still have a report to write.
 		report.Identity = f.toIdentity()
 		report.BatchOrder = collectResult.BatchOrder
-		writeReportFiles(f, report)
+		if werr := writeReportFiles(f, report); werr != nil {
+			fmt.Fprintf(os.Stderr, "benchgate: %v\n", werr)
+		}
 		fmt.Fprintf(os.Stderr, "benchgate: %v\n", err)
 		return 2
 	}
@@ -263,7 +265,10 @@ func runCompare(args []string) int {
 		benchgate.ApplyWaiver(report, f.toWaiver())
 	}
 
-	writeReportFiles(f, report)
+	if werr := writeReportFiles(f, report); werr != nil {
+		fmt.Fprintf(os.Stderr, "benchgate: %v\n", werr)
+		return 2
+	}
 	benchgate.WriteText(os.Stdout, report)
 	return exitCodeForVerdict(report.Verdict)
 }
@@ -308,7 +313,9 @@ func runCompareCmd(args []string) int {
 	report, err := benchgate.Compare(baseParsed, candParsed, policy)
 	if err != nil && report != nil {
 		report.Identity = f.toIdentity()
-		writeReportFiles(f, report)
+		if werr := writeReportFiles(f, report); werr != nil {
+			fmt.Fprintf(os.Stderr, "benchgate: %v\n", werr)
+		}
 		fmt.Fprintf(os.Stderr, "benchgate: %v\n", err)
 		return 2
 	}
@@ -323,48 +330,61 @@ func runCompareCmd(args []string) int {
 		benchgate.ApplyWaiver(report, f.toWaiver())
 	}
 
-	writeReportFiles(f, report)
+	if werr := writeReportFiles(f, report); werr != nil {
+		fmt.Fprintf(os.Stderr, "benchgate: %v\n", werr)
+		return 2
+	}
 	benchgate.WriteText(os.Stdout, report)
 	return exitCodeForVerdict(report.Verdict)
 }
 
-func writeReportFiles(f *compareFlags, report *benchgate.ComparisonReport) {
+func writeReportFiles(f *compareFlags, report *benchgate.ComparisonReport) error {
+	var firstErr error
 	if f.jsonOut != "" {
 		file, err := os.Create(f.jsonOut)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "benchgate: create %q: %v\n", f.jsonOut, err)
-			return
-		}
-		defer file.Close()
-		if err := benchgate.WriteJSON(file, report); err != nil {
-			fmt.Fprintf(os.Stderr, "benchgate: write json: %v\n", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("create %q: %w", f.jsonOut, err)
+			}
+		} else {
+			defer file.Close()
+			if err := benchgate.WriteJSON(file, report); err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("write json: %w", err)
+				}
+			}
 		}
 	}
 	if f.markdownOut != "" {
 		file, err := os.Create(f.markdownOut)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "benchgate: create %q: %v\n", f.markdownOut, err)
-			return
-		}
-		defer file.Close()
-		if err := benchgate.WriteMarkdown(file, report, f.artifactURL); err != nil {
-			fmt.Fprintf(os.Stderr, "benchgate: write markdown: %v\n", err)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("create %q: %w", f.markdownOut, err)
+			}
+		} else {
+			defer file.Close()
+			if err := benchgate.WriteMarkdown(file, report, f.artifactURL); err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("write markdown: %w", err)
+				}
+			}
 		}
 	}
+	return firstErr
 }
 
 // --- legacy mode (CV-only, backward compatible) ---
 
 func runLegacy(args []string) int {
-	pkg := flag.String("pkg", "./...", "package pattern to benchmark")
-	bench := flag.String("bench", ".", "benchmark regexp")
-	count := flag.Int("count", 10, "number of benchmark runs")
-	benchtime := flag.String("benchtime", "1s", "go test -benchtime value")
-	cvThreshold := flag.Float64("cv-threshold", 5.0, "max acceptable CV percent")
-	jsonOut := flag.Bool("json", false, "emit JSON output")
-	baseline := flag.String("baseline", "", "path to saved go test -bench output for comparison")
-	save := flag.String("save", "", "path to write raw benchmark output")
 	fs := flag.NewFlagSet("benchgate", flag.ExitOnError)
+	pkg := fs.String("pkg", "./...", "package pattern to benchmark")
+	bench := fs.String("bench", ".", "benchmark regexp")
+	count := fs.Int("count", 10, "number of benchmark runs")
+	benchtime := fs.String("benchtime", "1s", "go test -benchtime value")
+	cvThreshold := fs.Float64("cv-threshold", 5.0, "max acceptable CV percent")
+	jsonOut := fs.Bool("json", false, "emit JSON output")
+	baseline := fs.String("baseline", "", "path to saved go test -bench output for comparison")
+	save := fs.String("save", "", "path to write raw benchmark output")
 	fs.Usage = func() { printUsage(os.Stderr) }
 	fs.Parse(args)
 
@@ -427,10 +447,9 @@ func runLegacy(args []string) int {
 
 	if *baseline != "" {
 		// Use the new comparison engine for baseline comparison.
-		exitCode := compareWithBaseline(rawOutput, *baseline, workDir, *pkg, *bench, *count, *benchtime)
-		if exitCode != 0 && overallPass {
-			return exitCode
-		}
+		// Legacy mode keeps CV-only exit semantics: the comparison is
+		// informational and does not change the exit code.
+		compareWithBaseline(rawOutput, *baseline, workDir, *pkg, *bench, *count, *benchtime)
 	}
 
 	if !overallPass {
@@ -439,28 +458,27 @@ func runLegacy(args []string) int {
 	return 0
 }
 
-func compareWithBaseline(newOutput, baselinePath, workDir, pkg, bench string, count int, benchtime string) int {
+func compareWithBaseline(newOutput, baselinePath, workDir, pkg, bench string, count int, benchtime string) {
 	baseData, err := os.ReadFile(baselinePath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "benchgate: read baseline %q: %v\n", baselinePath, err)
-		return 2
+		return
 	}
 	baseParsed, perr := benchgate.ParseBenchOutput(strings.NewReader(string(baseData)), baselinePath)
 	if perr != nil {
 		fmt.Fprintf(os.Stderr, "benchgate: parse baseline: %v\n", perr)
-		return 2
+		return
 	}
 	candParsed, perr := benchgate.ParseBenchOutput(strings.NewReader(newOutput), "current")
 	if perr != nil {
 		fmt.Fprintf(os.Stderr, "benchgate: parse current: %v\n", perr)
-		return 2
+		return
 	}
 	report, err := benchgate.Compare(baseParsed, candParsed, benchgate.DefaultPolicy())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "benchgate: compare: %v\n", err)
-		return 2
+		return
 	}
 	fmt.Println("\n--- benchgate comparison ---")
 	benchgate.WriteText(os.Stdout, report)
-	return exitCodeForVerdict(report.Verdict)
 }

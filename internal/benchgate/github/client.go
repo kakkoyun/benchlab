@@ -91,6 +91,10 @@ type Artifact struct {
 type Comment struct {
 	ID   int64  `json:"id"`
 	Body string `json:"body"`
+	User struct {
+		Login string `json:"login"`
+		Type  string `json:"type"`
+	} `json:"user"`
 }
 
 // Label represents a GitHub label.
@@ -214,14 +218,16 @@ func (c *Client) UpdateComment(commentID int64, body string) error {
 	return nil
 }
 
-// FindStickyComment searches PR comments for one containing the hidden marker.
+// FindStickyComment searches PR comments for one containing the hidden marker
+// that was authored by a bot (not a human user). This prevents a user from
+// hijacking the sticky comment slot by including the marker in their own comment.
 func (c *Client) FindStickyComment(prNumber int) (*Comment, error) {
 	comments, err := c.ListPRComments(prNumber)
 	if err != nil {
 		return nil, err
 	}
 	for i := range comments {
-		if strings.Contains(comments[i].Body, HiddenMarker) {
+		if strings.Contains(comments[i].Body, HiddenMarker) && comments[i].User.Type == "Bot" {
 			return &comments[i], nil
 		}
 	}

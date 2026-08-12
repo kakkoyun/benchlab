@@ -4,9 +4,15 @@ import "fmt"
 
 // ApplyWaiver converts REGRESSION rows to WAIVED when the waiver is valid.
 // It cannot override INCONCLUSIVE or ERROR rows. The waiver applies to
-// one PR head SHA only.
+// one PR head SHA only — if the report identity head SHA does not match
+// the waiver head SHA, the waiver is rejected.
 func ApplyWaiver(report *ComparisonReport, waiver WaiverMetadata) {
 	if !waiver.Enabled {
+		return
+	}
+	// Verify the waiver applies to this report's head SHA.
+	if waiver.HeadSHA != "" && report.Identity.HeadSHA != "" &&
+		waiver.HeadSHA != report.Identity.HeadSHA {
 		return
 	}
 	if report.Waiver == nil {

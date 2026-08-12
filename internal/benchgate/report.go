@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"strings"
 )
 
@@ -67,7 +66,7 @@ func writeTextRow(w io.Writer, row *ComparisonRow) {
 		candMed = fmt.Sprintf("%.4g", row.Candidate.Median)
 	}
 	if row.Base != nil && row.Candidate != nil {
-		if math.IsInf(row.Delta, 0) {
+		if row.InfiniteRegression {
 			deltaStr = "+∞%"
 		} else {
 			deltaStr = fmt.Sprintf("%+.2f%%", row.Delta)
@@ -138,7 +137,12 @@ func WriteMarkdown(w io.Writer, report *ComparisonReport, artifactURL string) er
 		for _, warn := range report.Warnings {
 			fmt.Fprintf(&b, "- %s\n", escapeMD(warn))
 		}
-		_, err := io.WriteString(w, b.String())
+		content := b.String()
+		if len(content) > maxCommentChars {
+			content = content[:maxCommentChars]
+			content += "\n\n*Report truncated. See the workflow artifact for the full report.*\n"
+		}
+		_, err := io.WriteString(w, content)
 		return err
 	}
 
@@ -213,7 +217,7 @@ func writeMarkdownRow(b *strings.Builder, row *ComparisonRow) {
 		candMed = fmt.Sprintf("%.4g", row.Candidate.Median)
 	}
 	if row.Base != nil && row.Candidate != nil {
-		if math.IsInf(row.Delta, 0) {
+		if row.InfiniteRegression {
 			deltaStr = "+∞%"
 		} else {
 			deltaStr = fmt.Sprintf("%+.2f%%", row.Delta)

@@ -220,11 +220,14 @@ func TestCompare_Regression_ZeroToNonzeroAllocs(t *testing.T) {
 	if report.Verdict != VerdictRegression {
 		t.Errorf("expected REGRESSION for zero-to-nonzero, got %s", report.Verdict)
 	}
-	// Check that the B/op and allocs/op rows have infinite delta
+	// Check that the B/op and allocs/op rows have infinite regression flag
 	for _, row := range report.Rows {
 		if row.Key.Unit == "B/op" || row.Key.Unit == "allocs/op" {
 			if row.Status != RowRegression {
 				t.Errorf("expected %s REGRESSION, got %s", row.Key.Unit, row.Status)
+			}
+			if !row.InfiniteRegression {
+				t.Errorf("expected %s InfiniteRegression=true", row.Key.Unit)
 			}
 		}
 	}
@@ -565,6 +568,40 @@ func TestApplyWaiver_Disabled_Noop(t *testing.T) {
 	}
 }
 
+func TestApplyWaiver_SHAMismatch_Noop(t *testing.T) {
+	baseLines := makeSamples("BenchmarkFoo-8", 10, 100, 0, 0)
+	candLines := makeSamples("BenchmarkFoo-8", 10, 120, 0, 0)
+	base := mustParse(t, benchOutput(baseLines), "base")
+	cand := mustParse(t, benchOutput(candLines), "cand")
+
+	report, _ := Compare(base, cand, DefaultPolicy())
+	report.Identity.HeadSHA = "actual-head-sha"
+	// Waiver for a different head SHA should not apply.
+	ApplyWaiver(report, WaiverMetadata{
+		Enabled: true,
+		Actor:   "maintainer",
+		Label:   WaiverLabel,
+		HeadSHA: "different-head-sha",
+	})
+
+	if report.Verdict != VerdictRegression {
+		t.Errorf("waiver with mismatched SHA should not apply, got %s", report.Verdict)
+	}
+}
+
+func TestCompare_SyntaxErrors_Error(t *testing.T) {
+	// Malformed benchmark line (missing value).
+	baseOutput := "goos: linux\ngoarch: amd64\npkg: test\nBenchmarkFoo-8\t1000000\t ns/op\nPASS\n"
+	candOutput := "goos: linux\ngoarch: amd64\npkg: test\nBenchmarkFoo-8\t1000000\t100 ns/op\t0 B/op\t0 allocs/op\nPASS\n"
+	base := mustParse(t, baseOutput, "base")
+	cand := mustParse(t, candOutput, "cand")
+
+	_, err := Compare(base, cand, DefaultPolicy())
+	if err == nil {
+		t.Fatal("expected error for syntax errors in benchmark output")
+	}
+}
+
 func TestValidateWaiverEvent_Valid(t *testing.T) {
 	if err := ValidateWaiverEvent("labeled", WaiverLabel, "abc123"); err != nil {
 		t.Errorf("expected valid: %v", err)
@@ -642,7 +679,8 @@ func TestPercentDelta(t *testing.T) {
 
 func TestPercentDelta_ZeroToNonzero(t *testing.T) {
 	d := percentDelta(0, 1)
-	if d <= 0 && d == d { // not infinity
-		t.Errorf("expected +Inf for zero-to-nonzero, got %f", d)
+	// percentDelta returns 0 for base==0; callers use InfiniteRegression flag.
+	if d != 0 {
+		t.Errorf("expected 0 for zero-to-nonzero (base==0), got %f", d)
 	}
 }

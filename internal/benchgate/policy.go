@@ -60,7 +60,7 @@ type Policy struct {
 
 // DefaultPolicy returns the v0.2.0 default policy.
 func DefaultPolicy() Policy {
-	return Policy{
+	p := Policy{
 		Alpha:            0.05,
 		MaxCV:            5.0,
 		MinSamples:       10,
@@ -68,9 +68,14 @@ func DefaultPolicy() Policy {
 		RuntimeThreshold: 10.0,
 		BytesThreshold:   0.0,
 		AllocsThreshold:  0.0,
-		GatedUnits:       DefaultGatedUnits(),
 		AllowEnvMismatch: false,
 	}
+	p.GatedUnits = []GatedUnit{
+		{Unit: "sec/op", Direction: DirectionLowerIsBetter, Threshold: p.RuntimeThreshold},
+		{Unit: "B/op", Direction: DirectionLowerIsBetter, Threshold: p.BytesThreshold},
+		{Unit: "allocs/op", Direction: DirectionLowerIsBetter, Threshold: p.AllocsThreshold},
+	}
+	return p
 }
 
 // ThresholdForUnit returns the configured threshold for a unit, or -1

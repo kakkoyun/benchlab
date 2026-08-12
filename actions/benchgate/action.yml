@@ -65,8 +65,6 @@ runs:
     - name: Derive PR metadata
       shell: bash
       id: pr-meta
-      env:
-        GITHUB_EVENT_PATH: ${{ env.GITHUB_EVENT_PATH }}
       run: |
         # shellcheck source=/dev/null
         event_action=""
@@ -103,6 +101,11 @@ runs:
           echo "::error::No merge SHA found in event payload. The PR may be closed or the event is not a pull_request event."
           exit 2
         fi
+        actual_sha=$(git rev-parse HEAD)
+        if [ "$actual_sha" != "$MERGE_SHA" ]; then
+          echo "::error::Checkout HEAD ($actual_sha) does not match merge SHA ($MERGE_SHA). The action must run on the merge commit."
+          exit 2
+        fi
         echo "Verified merge SHA: $MERGE_SHA (head: $HEAD_SHA)"
 
     - name: Create base worktree
@@ -110,10 +113,17 @@ runs:
       id: worktree
       env:
         BASE_SHA: ${{ steps.pr-meta.outputs.base_sha }}
+        WORKDIR: ${{ inputs.workdir }}
       run: |
         base_worktree="$RUNNER_TEMP/base-worktree"
         git worktree add --detach "$base_worktree" "$BASE_SHA"
-        echo "base_dir=$base_worktree" >> "$GITHUB_OUTPUT"
+        # Resolve the same relative workdir under the base worktree so both
+        # sides benchmark the same package set.
+        base_dir="$base_worktree"
+        if [ "$WORKDIR" != "." ] && [ -n "$WORKDIR" ]; then
+          base_dir="$base_worktree/$WORKDIR"
+        fi
+        echo "base_dir=$base_dir" >> "$GITHUB_OUTPUT"
 
     - name: Run benchgate
       shell: bash
@@ -141,6 +151,7 @@ runs:
         PR_NUMBER: ${{ steps.pr-meta.outputs.pr_number }}
         RUN_ID: ${{ github.run_id }}
         ATTEMPT: ${{ github.run_attempt }}
+        EVENT_ACTION: ${{ steps.pr-meta.outputs.event_action }}
         LABEL: ${{ steps.pr-meta.outputs.label }}
         ACTOR: ${{ steps.pr-meta.outputs.actor }}
       run: |
@@ -148,6 +159,15 @@ runs:
         waiver_args=""
         if [ "$LABEL" = "benchgate:accept-regression" ] && [ "$EVENT_ACTION" = "labeled" ]; then
           waiver_args="-waiver-enabled -waiver-actor $ACTOR -waiver-head-sha $HEAD_SHA"
+        fi
+
+        cpu_args=""
+        if [ -n "$CPU" ]; then
+          cpu_args="-cpu $CPU"
+        fi
+        setup_args=""
+        if [ -n "$SETUP" ]; then
+          setup_args="-setup $SETUP"
         fi
 
         "$BENCHGATE" run \
@@ -158,6 +178,8 @@ runs:
           -count "$COUNT" \
           -benchtime "$BENCHTIME" \
           -work-dir "$RUNNER_TEMP" \
+          $cpu_args \
+          $setup_args \
           -runtime-threshold "$RUNTIME_THRESHOLD" \
           -bytes-threshold "$BYTES_THRESHOLD" \
           -allocs-threshold "$ALLOCS_THRESHOLD" \

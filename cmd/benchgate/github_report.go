@@ -20,7 +20,7 @@ func runGitHubReport(args []string) int {
 	repo := fs.String("repo", "", "repository (owner/repo)")
 	artifactName := fs.String("artifact-name", "", "artifact name prefix (default: benchgate-<run-id>-<attempt>)")
 	runID := fs.Int64("run-id", 0, "workflow run ID")
-	attempt := fs.Int("attempt", 1, "workflow run attempt")
+	attempt := fs.Int("attempt", 0, "workflow run attempt (0 = derive from event or default 1)")
 	prNumber := fs.Int("pr", 0, "PR number (0 = resolve from workflow run)")
 	baseSHA := fs.String("base-sha", "", "expected base SHA")
 	headSHA := fs.String("head-sha", "", "expected head SHA")
@@ -48,7 +48,8 @@ func runGitHubReport(args []string) int {
 		*eventPath = os.Getenv("GITHUB_EVENT_PATH")
 	}
 
-	// Parse the workflow_run event if available.
+	// Parse the workflow_run event if available. The workflow_run webhook
+	// nests the run data under the "workflow_run" key.
 	var run github.WorkflowRun
 	if *eventPath != "" {
 		data, err := os.ReadFile(*eventPath)
@@ -56,11 +57,15 @@ func runGitHubReport(args []string) int {
 			fmt.Fprintf(os.Stderr, "github-report: read event: %v\n", err)
 			return 2
 		}
-		if err := json.Unmarshal(data, &run); err != nil {
+		var payload struct {
+			WorkflowRun github.WorkflowRun `json:"workflow_run"`
+		}
+		if err := json.Unmarshal(data, &payload); err != nil {
 			fmt.Fprintf(os.Stderr, "github-report: parse event: %v\n", err)
 			return 2
 		}
-		// Override run ID and attempt from event if not set.
+		run = payload.WorkflowRun
+		// Override run ID and attempt from event if not set via flags.
 		if *runID == 0 {
 			*runID = run.ID
 		}
@@ -73,6 +78,9 @@ func runGitHubReport(args []string) int {
 		if *repo == "" && run.Repository.FullName != "" {
 			*repo = run.Repository.FullName
 		}
+	}
+	if *attempt == 0 {
+		*attempt = 1
 	}
 
 	if *runID == 0 {

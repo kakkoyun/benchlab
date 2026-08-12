@@ -66,16 +66,17 @@ type SideStats struct {
 
 // ComparisonRow is a single row in the comparison report.
 type ComparisonRow struct {
-	Key         SeriesKey  `json:"key"`
-	Base        *SideStats `json:"base,omitempty"`
-	Candidate   *SideStats `json:"candidate,omitempty"`
-	Delta       float64    `json:"delta"`       // percent change: (candidate-base)/base*100
-	PValue      float64    `json:"p_value"`     // Mann-Whitney p-value
-	Significant bool       `json:"significant"` // p < alpha
-	Threshold   float64    `json:"threshold"`   // applied threshold in percent
-	Direction   int        `json:"direction"`   // +1 higher is better, -1 lower is better, 0 unknown
-	Status      RowStatus  `json:"status"`
-	Warnings    []string   `json:"warnings,omitempty"`
+	Key                SeriesKey  `json:"key"`
+	Base               *SideStats `json:"base,omitempty"`
+	Candidate          *SideStats `json:"candidate,omitempty"`
+	Delta              float64    `json:"delta"`               // percent change: (candidate-base)/base*100
+	InfiniteRegression bool       `json:"infinite_regression"` // true when increased from zero
+	PValue             float64    `json:"p_value"`             // Mann-Whitney p-value
+	Significant        bool       `json:"significant"`         // p < alpha
+	Threshold          float64    `json:"threshold"`           // applied threshold in percent
+	Direction          int        `json:"direction"`           // +1 higher is better, -1 lower is better, 0 unknown
+	Status             RowStatus  `json:"status"`
+	Warnings           []string   `json:"warnings,omitempty"`
 }
 
 // IsGated reports whether this row is a gated series (has both base and candidate

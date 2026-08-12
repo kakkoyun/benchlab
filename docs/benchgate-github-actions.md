@@ -94,7 +94,6 @@ jobs:
       - name: Report
         shell: bash
         env:
-          GITHUB_EVENT_PATH: ${{ env.GITHUB_EVENT_PATH }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           "$RUNNER_TEMP/benchgate" github-report -repo "$GITHUB_REPOSITORY" -token "$GITHUB_TOKEN"

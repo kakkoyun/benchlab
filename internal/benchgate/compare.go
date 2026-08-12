@@ -134,6 +134,22 @@ func Compare(base, cand *ParsedResults, policy Policy) (*ComparisonReport, error
 		},
 	}
 
+	// Syntax errors in benchmark output are operational errors.
+	if len(base.SyntaxErrs) > 0 || len(cand.SyntaxErrs) > 0 {
+		var errs []string
+		for _, e := range base.SyntaxErrs {
+			errs = append(errs, "base: "+e)
+		}
+		for _, e := range cand.SyntaxErrs {
+			errs = append(errs, "candidate: "+e)
+		}
+		msg := "benchmark output syntax errors: " + strings.Join(errs, "; ")
+		report.Verdict = VerdictError
+		report.Warnings = append(report.Warnings, msg)
+		report.Summary = summarizeRows(nil)
+		return report, fmt.Errorf("%s", msg)
+	}
+
 	// Environment compatibility check.
 	if !policy.AllowEnvMismatch {
 		if msg := envMismatch(base.Env, cand.Env); msg != "" {
@@ -294,7 +310,7 @@ func compareSeries(g *benchGroup, unit string, bSamples, cSamples []float64, pol
 	// all-zero samples can cause the U-test to error).
 	if baseStats.Median == 0 && candStats.Median > 0 && direction == DirectionLowerIsBetter {
 		row.Status = RowRegression
-		row.Delta = math.Inf(1)
+		row.InfiniteRegression = true
 		row.Warnings = append(row.Warnings, "infinite regression: increased from zero")
 		return row
 	}
@@ -413,13 +429,11 @@ func median(sorted []float64) float64 {
 	return (sorted[n/2-1] + sorted[n/2]) / 2
 }
 
-// percentDelta computes (candidate-base)/base*100, handling base==0.
+// percentDelta computes (candidate-base)/base*100. Returns 0 when base is 0
+// (callers should check InfiniteRegression for the zero-to-nonzero case).
 func percentDelta(base, candidate float64) float64 {
 	if base == 0 {
-		if candidate == 0 {
-			return 0
-		}
-		return math.Inf(1)
+		return 0
 	}
 	return (candidate - base) / base * 100
 }

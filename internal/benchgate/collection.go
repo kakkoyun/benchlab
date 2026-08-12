@@ -43,6 +43,9 @@ func Collect(opts CollectOptions) (*CollectResult, error) {
 	if opts.Count < 2 {
 		return nil, fmt.Errorf("count must be at least 2, got %d", opts.Count)
 	}
+	if opts.BaseDir == "" {
+		return nil, fmt.Errorf("base-dir is required: without a base worktree, both sides benchmark the same code")
+	}
 	if opts.Benchtime == "" {
 		opts.Benchtime = "1s"
 	}

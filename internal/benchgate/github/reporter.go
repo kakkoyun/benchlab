@@ -61,8 +61,9 @@ func ValidateArtifact(
 		return nil, fmt.Errorf("artifact contains %d files, max %d", len(zipReader.File), MaxArtifactFiles)
 	}
 
-	// Extract expected files.
+	// Extract expected files, tracking cumulative decompressed size.
 	files := make(map[string][]byte)
+	var cumulativeSize int64
 	for _, zf := range zipReader.File {
 		name := zf.Name
 		if strings.HasPrefix(name, "./") {
@@ -75,12 +76,21 @@ func ValidateArtifact(
 		if err != nil {
 			return nil, fmt.Errorf("open %s in artifact: %w", name, err)
 		}
-		content, err := io.ReadAll(io.LimitReader(rc, MaxArtifactSize))
+		remaining := MaxArtifactSize - cumulativeSize
+		if remaining <= 0 {
+			rc.Close()
+			return nil, fmt.Errorf("cumulative extracted size exceeds max %d", MaxArtifactSize)
+		}
+		content, err := io.ReadAll(io.LimitReader(rc, remaining+1))
 		rc.Close()
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", name, err)
 		}
+		if int64(len(content)) > remaining {
+			return nil, fmt.Errorf("cumulative extracted size exceeds max %d", MaxArtifactSize)
+		}
 		files[name] = content
+		cumulativeSize += int64(len(content))
 	}
 
 	// Check all expected files present.
@@ -135,30 +145,50 @@ type Expectation struct {
 }
 
 func validateIdentity(report *benchgate.ComparisonReport, expect Expectation) error {
-	if expect.Repository != "" && report.Identity.Repository != "" &&
-		report.Identity.Repository != expect.Repository {
-		return fmt.Errorf("repository mismatch: artifact has %q, expected %q",
-			report.Identity.Repository, expect.Repository)
+	if expect.Repository != "" {
+		if report.Identity.Repository == "" {
+			return fmt.Errorf("artifact missing repository identity; expected %q", expect.Repository)
+		}
+		if report.Identity.Repository != expect.Repository {
+			return fmt.Errorf("repository mismatch: artifact has %q, expected %q",
+				report.Identity.Repository, expect.Repository)
+		}
 	}
-	if expect.PRNumber > 0 && report.Identity.PRNumber > 0 &&
-		report.Identity.PRNumber != expect.PRNumber {
-		return fmt.Errorf("PR number mismatch: artifact has %d, expected %d",
-			report.Identity.PRNumber, expect.PRNumber)
+	if expect.PRNumber > 0 {
+		if report.Identity.PRNumber == 0 {
+			return fmt.Errorf("artifact missing PR number; expected %d", expect.PRNumber)
+		}
+		if report.Identity.PRNumber != expect.PRNumber {
+			return fmt.Errorf("PR number mismatch: artifact has %d, expected %d",
+				report.Identity.PRNumber, expect.PRNumber)
+		}
 	}
-	if expect.BaseSHA != "" && report.Identity.BaseSHA != "" &&
-		report.Identity.BaseSHA != expect.BaseSHA {
-		return fmt.Errorf("base SHA mismatch: artifact has %q, expected %q",
-			report.Identity.BaseSHA, expect.BaseSHA)
+	if expect.BaseSHA != "" {
+		if report.Identity.BaseSHA == "" {
+			return fmt.Errorf("artifact missing base SHA; expected %q", expect.BaseSHA)
+		}
+		if report.Identity.BaseSHA != expect.BaseSHA {
+			return fmt.Errorf("base SHA mismatch: artifact has %q, expected %q",
+				report.Identity.BaseSHA, expect.BaseSHA)
+		}
 	}
-	if expect.HeadSHA != "" && report.Identity.HeadSHA != "" &&
-		report.Identity.HeadSHA != expect.HeadSHA {
-		return fmt.Errorf("head SHA mismatch: artifact has %q, expected %q",
-			report.Identity.HeadSHA, expect.HeadSHA)
+	if expect.HeadSHA != "" {
+		if report.Identity.HeadSHA == "" {
+			return fmt.Errorf("artifact missing head SHA; expected %q", expect.HeadSHA)
+		}
+		if report.Identity.HeadSHA != expect.HeadSHA {
+			return fmt.Errorf("head SHA mismatch: artifact has %q, expected %q",
+				report.Identity.HeadSHA, expect.HeadSHA)
+		}
 	}
-	if expect.MergeSHA != "" && report.Identity.MergeSHA != "" &&
-		report.Identity.MergeSHA != expect.MergeSHA {
-		return fmt.Errorf("merge SHA mismatch: artifact has %q, expected %q",
-			report.Identity.MergeSHA, expect.MergeSHA)
+	if expect.MergeSHA != "" {
+		if report.Identity.MergeSHA == "" {
+			return fmt.Errorf("artifact missing merge SHA; expected %q", expect.MergeSHA)
+		}
+		if report.Identity.MergeSHA != expect.MergeSHA {
+			return fmt.Errorf("merge SHA mismatch: artifact has %q, expected %q",
+				report.Identity.MergeSHA, expect.MergeSHA)
+		}
 	}
 	return nil
 }
