@@ -1,6 +1,7 @@
 package advisory
 
 import (
+	"slices"
 	"sort"
 	"testing"
 )
@@ -23,6 +24,14 @@ func BenchmarkTimedSetup(b *testing.B) {
 	}
 }
 
+func BenchmarkResetTimerExcludesSetup(b *testing.B) {
+	input := value()
+	b.ResetTimer()
+	for range b.N { // want "canonical b.N loop can use"
+		consume(input)
+	}
+}
+
 func BenchmarkTimedCleanup(b *testing.B) {
 	var result int  // want "nontrivial setup before a legacy b.N loop"
 	for range b.N { // want "canonical b.N loop can use"
@@ -31,9 +40,31 @@ func BenchmarkTimedCleanup(b *testing.B) {
 	consume(result) // want "nontrivial cleanup after a legacy b.N loop"
 }
 
+func BenchmarkStopTimerExcludesCleanup(b *testing.B) {
+	var result int  // want "nontrivial setup before a legacy b.N loop"
+	for range b.N { // want "canonical b.N loop can use"
+		result = value()
+	}
+	b.StopTimer()
+	consume(result)
+}
+
+func BenchmarkDeferredCleanup(b *testing.B) {
+	defer consume(value()) // want "nontrivial setup before a legacy b.N loop" "deferred cleanup remains"
+	for range b.N {        // want "canonical b.N loop can use"
+		consume(value())
+	}
+}
+
 func BenchmarkDiscardedResult(b *testing.B) {
 	for range b.N { // want "canonical b.N loop can use"
 		value() // want "result-returning call is discarded"
+	}
+}
+
+func BenchmarkBlankAssignedResult(b *testing.B) {
+	for range b.N { // want "canonical b.N loop can use"
+		_ = value() // want "assigned to the blank identifier"
 	}
 }
 
@@ -78,6 +109,21 @@ func BenchmarkReusedMutatedInput(b *testing.B) {
 	}
 }
 
+func BenchmarkReusedSlicesInput(b *testing.B) {
+	input := []int{3, 2, 1} // want "nontrivial setup before a legacy b.N loop"
+	for range b.N {         // want "canonical b.N loop can use"
+		slices.Reverse(input) // want "in-place sort or reverse operation reuses input"
+	}
+}
+
+func BenchmarkReassignedInput(b *testing.B) {
+	input := []int{3, 2, 1} // want "nontrivial setup before a legacy b.N loop"
+	for range b.N {         // want "canonical b.N loop can use"
+		input = []int{3, 2, 1} // want "result has no observable use"
+		sort.Ints(input)
+	}
+}
+
 func BenchmarkRedundantBLoopTimer(b *testing.B) {
 	b.ResetTimer() // want "duplicates B.Loop behavior"
 	for b.Loop() {
@@ -99,4 +145,12 @@ func BenchmarkCleanClone(b *testing.B) {
 		sort.Ints(input)
 		consume(input[0])
 	}
+}
+
+func BenchmarkObservedLegacyResult(b *testing.B) {
+	var result int  // want "nontrivial setup before a legacy b.N loop"
+	for range b.N { // want "canonical b.N loop can use"
+		result = value()
+	}
+	packageSink = result // want "nontrivial cleanup after a legacy b.N loop"
 }

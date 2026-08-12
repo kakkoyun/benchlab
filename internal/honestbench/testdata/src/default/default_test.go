@@ -14,12 +14,35 @@ func helperLoop(b *t.B) {
 func recursiveA(b *t.B) { recursiveB(b) }
 func recursiveB(b *t.B) { recursiveA(b) }
 
+func helperMissingLoop(b *t.B) { consume(work()) }
+
+func helperStopTimer(b *t.B) {
+	b.StopTimer() // want "reachable iteration path stops timing" "every reachable work statement"
+	consume(work())
+}
+
+func helperPB(pb *t.PB) {
+	for pb.Next() {
+		consume(work())
+	}
+}
+
 func BenchmarkCleanAlias(b *t.B) {
 	helperLoop(b)
 }
 
 func BenchmarkExternalDelegation(b *t.B) {
 	externalhelper.RunBenchmark(b)
+}
+
+func BenchmarkLocalHelperMissingLoop(b *t.B) { // want "benchmark scope has no B.Loop"
+	helperMissingLoop(b)
+}
+
+func BenchmarkLocalHelperTimer(b *t.B) {
+	for b.Loop() {
+		helperStopTimer(b)
+	}
 }
 
 func BenchmarkRecursiveDelegation(b *t.B) { // want "benchmark scope has no B.Loop"
@@ -81,6 +104,24 @@ func BenchmarkWrongBNCount(b *t.B) {
 	}
 }
 
+func BenchmarkWrongBNStart(b *t.B) {
+	for i := 1; i < b.N; i++ { // want "provably not executed exactly b.N times"
+		consume(i)
+	}
+}
+
+func BenchmarkWrongBNStep(b *t.B) {
+	for i := 0; i < b.N; i += 2 { // want "provably not executed exactly b.N times"
+		consume(i)
+	}
+}
+
+func BenchmarkCanonicalBNNotEqual(b *t.B) {
+	for i := 0; i != b.N; i++ {
+		consume(i)
+	}
+}
+
 func BenchmarkResetInLoop(b *t.B) {
 	for b.Loop() {
 		b.ResetTimer() // want "ResetTimer inside a measured iteration"
@@ -109,6 +150,26 @@ func BenchmarkTimerBranchClean(b *t.B) {
 			b.StartTimer()
 		} else {
 			b.StartTimer()
+		}
+		consume(work())
+	}
+}
+
+func BenchmarkTimerBranchMissingStart(b *t.B) {
+	for b.Loop() {
+		b.StopTimer() // want "reachable iteration path stops timing"
+		if work() > 0 {
+			b.StartTimer()
+		}
+		consume(work())
+	}
+}
+
+func BenchmarkTimerLoopBackedge(b *t.B) {
+	for b.Loop() {
+		for work() > 0 {
+			b.StopTimer() // want "reachable iteration path stops timing"
+			break
 		}
 		consume(work())
 	}
@@ -194,6 +255,12 @@ func BenchmarkRunParallelExternalDelegation(b *t.B) {
 	})
 }
 
+func BenchmarkRunParallelLocalHelper(b *t.B) {
+	b.RunParallel(func(pb *t.PB) {
+		helperPB(pb)
+	})
+}
+
 func BenchmarkSetParallelismOrder(b *t.B) {
 	b.RunParallel(func(pb *t.PB) {
 		for pb.Next() {
@@ -203,9 +270,48 @@ func BenchmarkSetParallelismOrder(b *t.B) {
 	b.SetParallelism(2) // want "definitely executes after RunParallel"
 }
 
+func BenchmarkSetParallelismBranchClean(b *t.B) {
+	if work() > 0 {
+		b.RunParallel(func(pb *t.PB) {
+			for pb.Next() {
+				consume(work())
+			}
+		})
+	} else {
+		b.SetParallelism(2)
+	}
+}
+
+func BenchmarkSetParallelismBranchWrong(b *t.B) {
+	b.RunParallel(func(pb *t.PB) {
+		for pb.Next() {
+			consume(work())
+		}
+	})
+	if work() > 0 {
+		b.SetParallelism(2) // want "definitely executes after RunParallel"
+	}
+}
+
 func BenchmarkMalformedAttempt(b *t.B) {
 	for b.Loop() && work() > 0 { // want "B.Loop must be the sole condition"
 		consume(work())
+	}
+}
+
+func BenchmarkReceiverAlias(b *t.B) {
+	alias := b
+	for alias.Loop() {
+		consume(work())
+	}
+}
+
+func BenchmarkShadowedReceiver(b *t.B) {
+	for b.Loop() {
+		b := &fakeB{}
+		if b.Loop() {
+			consume(b.N)
+		}
 	}
 }
 

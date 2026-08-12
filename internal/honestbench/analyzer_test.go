@@ -33,7 +33,7 @@ func TestSuggestedFixes(t *testing.T) {
 			t.Errorf("reset advisory flag: %v", err)
 		}
 	})
-	analysistest.RunWithSuggestedFixes(t, analysistest.TestData(), Analyzer, "fixes")
+	analysistest.RunWithSuggestedFixes(t, analysistest.TestData(), Analyzer, "fixes", "generated", "commentfix")
 }
 
 func TestAnalyzerValid(t *testing.T) {

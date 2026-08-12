@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/analysis"
 )
@@ -306,8 +307,29 @@ func (r *runner) checkRedundantBLoopTimer(loop *loopInfo, facts *scopeFacts) {
 }
 
 func (r *runner) removeStatementFix(stmt ast.Stmt, message string) []analysis.SuggestedFix {
-	if r.hasCommentBetween(stmt.Pos(), stmt.End()) {
+	if r.statementHasComment(stmt) {
 		return nil
 	}
 	return []analysis.SuggestedFix{{Message: message, TextEdits: []analysis.TextEdit{{Pos: stmt.Pos(), End: stmt.End()}}}}
+}
+
+func (r *runner) statementHasComment(stmt ast.Stmt) bool {
+	file := r.fileAt(stmt.Pos())
+	if file == nil {
+		return true
+	}
+	stmtLine := r.pass.Fset.PositionFor(stmt.End(), false).Line
+	for _, group := range file.Comments {
+		start := r.pass.Fset.PositionFor(group.Pos(), false).Line
+		if (group.Pos() >= stmt.Pos() && group.Pos() <= stmt.End()) || start == stmtLine {
+			if !isAnalysistestWant(group.Text()) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isAnalysistestWant(text string) bool {
+	return strings.HasPrefix(strings.TrimSpace(text), "want ")
 }

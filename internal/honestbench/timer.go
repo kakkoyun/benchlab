@@ -72,9 +72,18 @@ func (r *runner) analyzeTimerStmt(stmt ast.Stmt, input timerMask, facts *scopeFa
 		}
 		if callPassesActiveObject(r.pass, call, facts.activeB) {
 			fn := r.calledFunction(call)
-			if fn == nil || r.funcDecls[fn] == nil {
+			fd := r.funcDecls[fn]
+			if fn == nil || fd == nil {
 				return timerSummary{end: timerUnknown, workUnknown: true, unknownHelperEffects: true}
 			}
+			if facts.timerHelpers[fn] {
+				return timerSummary{end: timerUnknown, workUnknown: true, unknownHelperEffects: true}
+			}
+			facts.timerHelpers[fn] = true
+			helperB := r.helperBenchmarkObjects(call, fn, fd, facts.activeB)
+			summary := r.analyzeTimerBlock(fd.Body, input, facts, firstObject(helperB))
+			delete(facts.timerHelpers, fn)
+			return summary
 		}
 		if r.isWorkCall(call) {
 			return workSummary(input)

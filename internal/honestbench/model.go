@@ -58,6 +58,7 @@ type scopeFacts struct {
 	unknownBDelegation  bool
 	unknownPBDelegation bool
 	visitedHelpers      map[*types.Func]bool
+	timerHelpers        map[*types.Func]bool
 	regions             []scopeRegion
 }
 
@@ -80,6 +81,7 @@ func (r *runner) analyzeBenchmarkScope(body *ast.BlockStmt, recv types.Object, o
 		activePB:       make(map[types.Object]bool),
 		outerB:         cloneObjectSet(outer),
 		visitedHelpers: make(map[*types.Func]bool),
+		timerHelpers:   make(map[*types.Func]bool),
 	}
 	if len(facts.outerB) > 0 {
 		facts.kind = subbenchmarkScope
@@ -101,6 +103,7 @@ func (r *runner) analyzeParallelScope(body *ast.BlockStmt, pb types.Object, oute
 		activePB:       map[types.Object]bool{pb: true},
 		outerB:         cloneObjectSet(outerB),
 		visitedHelpers: make(map[*types.Func]bool),
+		timerHelpers:   make(map[*types.Func]bool),
 	}
 	r.scanBlock(facts, body, facts.activeB, facts.activePB)
 	r.checkParallelRules(facts)
@@ -591,6 +594,32 @@ func (r *runner) calledFunction(call *ast.CallExpr) *types.Func {
 		}
 		result, _ := r.pass.TypesInfo.Uses[fn.Sel].(*types.Func)
 		return result
+	}
+	return nil
+}
+
+func (r *runner) helperBenchmarkObjects(call *ast.CallExpr, fn *types.Func, fd *ast.FuncDecl, activeB map[types.Object]bool) map[types.Object]bool {
+	result := make(map[types.Object]bool)
+	sig, _ := fn.Type().(*types.Signature)
+	if sig == nil {
+		return result
+	}
+	for i, arg := range call.Args {
+		if i >= sig.Params().Len() {
+			break
+		}
+		argObj := baseObject(r.pass, arg)
+		paramObj := parameterObject(r.pass, fd.Type, i)
+		if paramObj != nil && activeB[argObj] && isTestingPointer(sig.Params().At(i).Type(), "B") {
+			result[paramObj] = true
+		}
+	}
+	return result
+}
+
+func firstObject(objects map[types.Object]bool) types.Object {
+	for object := range objects {
+		return object
 	}
 	return nil
 }
