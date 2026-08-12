@@ -31,7 +31,7 @@ npx skills add kakkoyun/benchlab --skill honest-benchmark -a claude-code
 | `benchgate` | `benchstat-gate` | Is the sample stable enough? |
 | `benchenv` | `diagnose-noisy-bench` | What is making the benchmark noisy? |
 
-The commands are stdlib-only Go programs. The skills teach coding agents when to run them, how to interpret their output, and how to fix the problems they find.
+The tools are no longer stdlib-only: `benchgate` depends on `golang.org/x/perf` for benchmark parsing and statistical comparison. `honestbench` and `benchenv` remain stdlib-only. The skills teach coding agents when to run them, how to interpret their output, and how to fix the problems they find.
 
 ## honestbench
 
@@ -49,16 +49,36 @@ Exit codes: `0` for no findings, `1` for findings, and `2` for an error.
 
 ## benchgate
 
-`benchgate` runs benchmarks repeatedly, computes the coefficient of variation for each benchmark, and fails when a result exceeds the configured threshold. It can save raw output and compare it with a baseline through `benchstat`.
+`benchgate` runs benchmarks, compares base and candidate results with Mann-Whitney U test statistics via `golang.org/x/perf`, and emits a `PASS`, `REGRESSION`, `INCONCLUSIVE`, `WAIVED`, or `ERROR` verdict.
 
 ```bash
+# Collect and compare in one step (requires a base worktree)
+benchgate run -base-dir ../base-worktree -pkg ./... -count 10
+
+# Compare two pre-collected result files
+benchgate compare -base before.txt -candidate after.txt
+
+# Legacy CV-only mode (backward compatible)
 benchgate -pkg ./... -count 10 -cv-threshold 5.0
-benchgate -pkg ./... -count 10 -json
 benchgate -pkg ./... -count 10 -save before.txt
 benchgate -pkg ./... -count 10 -baseline before.txt
 ```
 
-Exit codes: `0` for a passing gate, `1` for an unstable sample, and `2` for an error.
+Exit codes: `0` for pass or valid waiver, `1` for regression or inconclusive result, `2` for error.
+
+### GitHub Actions quick start
+
+Add a read-only PR gate that runs on every pull request:
+
+```yaml
+- uses: kakkoyun/benchlab/actions/benchgate@v0.2.0
+  with:
+    count: '10'
+    runtime-threshold: '10'
+    cv-threshold: '5'
+```
+
+The gate receives no secrets and no write token. A separate trusted reporter workflow posts the PR comment and manages the one-shot `benchgate:accept-regression` waiver label. See [`docs/benchgate-github-actions.md`](docs/benchgate-github-actions.md) for the full setup, permissions, fork behavior, branch protection, and waiver lifecycle.
 
 ## benchenv
 
@@ -85,7 +105,7 @@ Each skill includes a `go run github.com/kakkoyun/benchlab/cmd/<tool>@latest` pa
 
 ## Development
 
-Go 1.24 or newer is required.
+Go 1.25 or newer is required.
 
 ```bash
 make check

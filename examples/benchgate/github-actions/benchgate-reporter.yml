@@ -1,0 +1,36 @@
+name: benchgate-reporter
+
+on:
+  workflow_run:
+    workflows: [benchgate]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  report:
+    name: benchgate reporter
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build benchgate
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/kakkoyun/benchlab.git "$RUNNER_TEMP/benchlab"
+          cd "$RUNNER_TEMP/benchlab"
+          git fetch --depth 1 origin v0.2.0
+          git checkout v0.2.0
+          go build -o "$RUNNER_TEMP/benchgate" ./cmd/benchgate
+
+      - name: Report
+        shell: bash
+        env:
+          GITHUB_EVENT_PATH: ${{ env.GITHUB_EVENT_PATH }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          "$RUNNER_TEMP/benchgate" github-report \
+            -repo "$GITHUB_REPOSITORY" \
+            -token "$GITHUB_TOKEN"

@@ -1,16 +1,42 @@
 ---
 name: benchstat-gate
 description: |
-  Runs Go benchmarks N times, computes coefficient of variation (CV) per benchmark, and emits a PASS/FAIL stability verdict against a CV threshold. Optionally diffs against a saved baseline via benchstat.
-  USE WHEN: "benchmark stability gate", "check benchmark coefficient of variation", "gate benchmark regression", "is my benchmark stable enough", "cv threshold check", "benchmark noise floor".
+  Runs Go benchmarks, compares base and candidate results with Mann-Whitney U test
+  statistics via golang.org/x/perf, and emits a PASS/REGRESSION/INCONCLUSIVE/WAIVED/ERROR
+  verdict. Supports GitHub Actions PR gates, one-shot waivers, and counterbalanced
+  collection.
+  USE WHEN: "benchmark regression gate", "benchmark CI gate", "compare benchmark results",
+  "benchstat alternative", "benchmark A/B comparison", "GitHub Actions benchmark gate",
+  "benchmark waiver", "benchgate".
 license: MIT
-compatibility: Requires Go 1.24 or newer on PATH.
+compatibility: Requires Go 1.25 or newer on PATH. Uses golang.org/x/perf for statistics.
 disable-model-invocation: false
 ---
 
 # benchstat-gate
 
-`benchgate` is a Go CLI that wraps `go test -bench` to measure benchmark stability via the **coefficient of variation** (CV = stddev/mean × 100%). A benchmark with CV > threshold is flagged as unstable and the tool exits non-zero — making it safe to use as a CI gate.
+`benchgate` is a Go CLI that wraps `go test -bench` to collect benchmark samples,
+compare base and candidate results with Mann-Whitney U test statistics
+(`golang.org/x/perf/benchmath.AssumeNothing`), and emit a verdict that can
+block merges in CI.
+
+## Commands
+
+```bash
+# Collect and compare in one step (requires a base worktree)
+benchgate run -base-dir ../base-worktree -pkg ./... -count 10
+
+# Compare two pre-collected result files
+benchgate compare -base before.txt -candidate after.txt
+
+# Trusted GitHub PR comment helper (used by the reporter workflow)
+benchgate github-report -repo owner/repo -token $GITHUB_TOKEN
+
+# Legacy CV-only mode (backward compatible)
+benchgate -pkg ./... -count 10 -cv-threshold 5.0
+benchgate -pkg ./... -count 10 -save before.txt
+benchgate -pkg ./... -count 10 -baseline before.txt
+```
 
 ## Run the CLI
 
@@ -23,79 +49,86 @@ go install github.com/kakkoyun/benchlab/cmd/benchgate@latest
 Or run it immediately without installing:
 
 ```bash
-go run github.com/kakkoyun/benchlab/cmd/benchgate@latest -pkg ./... -count 10 -cv-threshold 5.0
+go run github.com/kakkoyun/benchlab/cmd/benchgate@latest compare -base before.txt -candidate after.txt
 ```
 
-## Stability check (single run)
+## Statistics and defaults
 
-```bash
-benchgate \
-  -pkg ./... \
-  -bench 'BenchmarkFoo|BenchmarkBar' \
-  -count 10 \
-  -benchtime 1s \
-  -cv-threshold 5.0
+- Match by package, full benchmark name, CPU/GOMAXPROCS variant, and normalized unit
+- Gate `sec/op`, `B/op`, and `allocs/op`
+- Default to 10 samples per side, alpha 0.05, and maximum CV 5%
+- Fail runtime only when the candidate is more than 10% slower and p < 0.05
+- Fail bytes or allocation count on any increase when p < 0.05
+- Treat an increase from zero as an infinite allocation regression
+- Pass deltas exactly at their threshold
+- Report improvements without failing
+
+### Verdicts
+
+| Verdict | Exit code | Meaning |
+|---|---|---|
+| `PASS` | 0 | All gated series passed or improved |
+| `REGRESSION` | 1 | At least one gated series regressed beyond threshold |
+| `INCONCLUSIVE` | 1 | At least one series could not be decided (insufficient samples, high CV, missing unit, or statistical warning) |
+| `WAIVED` | 0 | A regression was accepted via the one-shot waiver |
+| `ERROR` | 2 | Execution, configuration, or parsing error |
+
+## GitHub Actions
+
+Add a read-only PR gate:
+
+```yaml
+- uses: kakkoyun/benchlab/actions/benchgate@v0.2.0
+  with:
+    count: '10'
+    runtime-threshold: '10'
+    cv-threshold: '5'
 ```
 
-Exit code: `0` = PASS, `1` = FAIL (CV exceeded), `2` = error.
+See `docs/benchgate-github-actions.md` for the full setup, including the trusted
+reporter workflow, permissions, fork behavior, branch protection, and the
+one-shot `benchgate:accept-regression` waiver label.
 
-### JSON output
+## Why benchgate uses worktrees, counterbalanced batches, and pinned x/perf
 
-```bash
-benchgate -pkg ./... -count 10 -json | jq .
-```
+- **Worktrees:** the base is collected in a detached git worktree at the exact
+  base SHA. The candidate uses the checked-out merge commit. This avoids
+  checking out the base branch over the candidate working tree.
+- **Counterbalanced batches:** collection order is base half, candidate half,
+  candidate remainder, base remainder. This counterbalances temporal drift.
+- **`-run '^$'` and `-p=1`:** tests are excluded from benchmark collection.
+  Packages do not compete with each other.
+- **Pinned `golang.org/x/perf`:** the comparison uses `benchfmt` for parsing
+  and `benchmath.AssumeNothing` for the Mann-Whitney U test, all in process.
+  No `benchstat@latest` install, no regex parsing of human-readable output.
+- **CV guard:** a series with CV > 5% is INCONCLUSIVE, not a false pass or
+  false fail.
+- **Separate reporter:** the PR comment is posted by a trusted `workflow_run`
+  reporter that never checks out or executes PR code.
 
-Output shape:
-
-```json
-{
-  "verdict": "PASS",
-  "threshold": 5.0,
-  "benchmarks": [
-    { "name": "BenchmarkFoo", "mean": 123.4, "stddev": 1.8, "cv": 1.46, "pass": true }
-  ]
-}
-```
-
-## A/B comparison with benchstat
-
-Save a baseline, make your change, then compare:
-
-```bash
-# Before the change — save baseline
-benchgate -pkg ./... -count 10 -save /tmp/before.txt
-
-# After the change — gate + diff
-benchgate -pkg ./... -count 10 -baseline /tmp/before.txt
-```
-
-The tool runs `benchstat <baseline> <newrun>` and prints the delta table below the CV verdict.
-
-## Flags
+## Flags (compare and run)
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-pkg` | `./...` | Package pattern passed to `go test` |
 | `-bench` | `.` | Benchmark regexp |
-| `-count` | `10` | Number of runs per benchmark |
+| `-count` | `10` | Number of samples per side |
 | `-benchtime` | `1s` | Per-iteration time budget |
-| `-cv-threshold` | `5.0` | Max acceptable CV% (fail above this) |
-| `-json` | false | Emit JSON instead of human-readable text |
-| `-baseline` | — | Path to saved output for `benchstat` comparison |
-| `-save` | — | Path to write raw output (to use as a future baseline) |
-
-## Reading the CV verdict
-
-```
-  BenchmarkFoo    mean=   123.4 ns/op  cv=  1.8%  ✓
-  BenchmarkBar    mean=    99.1 ns/op  cv=  7.2%  ✗ (exceeds 5.0% threshold)
-
-VERDICT: FAIL — 1/2 benchmarks exceed CV threshold 5.0%
-```
-
-- **CV < 2%** — excellent; numbers are trustworthy on most hardware.
-- **CV 2–5%** — acceptable; typical for user-space code on a quiet machine.
-- **CV > 5%** — noisy. Fix the environment before trusting the numbers.
+| `-cpu` | — | Optional `-cpu` value |
+| `-setup` | — | Setup command run once per worktree |
+| `-base-dir` | — | Base worktree directory (run mode) |
+| `-cand-dir` | cwd | Candidate worktree directory (run mode) |
+| `-base` | — | Path to saved base output (compare mode) |
+| `-candidate` | — | Path to saved candidate output (compare mode) |
+| `-runtime-threshold` | `10.0` | Runtime regression threshold percent |
+| `-bytes-threshold` | `0.0` | Bytes regression threshold percent |
+| `-allocs-threshold` | `0.0` | Allocs regression threshold percent |
+| `-cv-threshold` | `5.0` | Max acceptable CV percent |
+| `-alpha` | `0.05` | Significance alpha |
+| `-min-samples` | `10` | Minimum samples per side |
+| `-json-out` | — | Write JSON report to path |
+| `-markdown-out` | — | Write Markdown report to path |
+| `-allow-env-mismatch` | false | Allow comparison across incompatible environments |
 
 ## CV > 5%? Fix the environment first
 
@@ -106,15 +139,9 @@ drowning the signal. Before tuning code, stabilise the measurement:
   ```bash
   perflock -governor performance taskset -c 2 go test -bench=. -count=20 ./...
   ```
-  `perflock` holds a performance-governor lock for the duration of the run.
-  `taskset -c 2` pins to CPU 2 (pick an isolated core, not CPU 0).
-
 - **macOS:** close background apps, disable Spotlight indexing, and prefer
   `-benchtime 5s` to amortise timer jitter over longer runs.
-
 - **CI:** run benchmarks on a dedicated bare-metal runner, not a shared VM.
-  Use `benchstat` to detect regressions statistically rather than relying on a
-  single noisy run.
 
 Only after CV drops below your threshold should you treat benchmark deltas as
 signal rather than noise.
