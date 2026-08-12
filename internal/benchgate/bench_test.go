@@ -6,18 +6,13 @@ import (
 )
 
 // These benchmarks exercise the core benchgate engine paths: parsing,
-// comparison, and report rendering. They use B.Loop, ReportAllocs, and
-// correct timer boundaries. Results are written to package-level sinks to
-// defeat dead-code elimination.
-
-// sinkBench prevents the compiler from eliminating benchmark work.
-var sinkBench any
+// comparison, and report rendering. Exact B.Loop bodies keep call results
+// alive without package-level sinks.
 
 // BenchmarkParseBenchOutput measures parsing of realistic benchmark output.
 func BenchmarkParseBenchOutput(b *testing.B) {
 	output := benchOutputForBench()
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		_, _ = ParseBenchOutput(strings.NewReader(output), "bench")
 	}
@@ -30,10 +25,8 @@ func BenchmarkCompare(b *testing.B) {
 	cand, _ := ParseBenchOutput(strings.NewReader(output), "cand")
 	policy := DefaultPolicy()
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
-		report, _ := Compare(base, cand, policy)
-		sinkBench = report
+		_, _ = Compare(base, cand, policy)
 	}
 }
 
@@ -41,7 +34,6 @@ func BenchmarkCompare(b *testing.B) {
 func BenchmarkWriteText(b *testing.B) {
 	report := reportForBench()
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		_ = WriteText(&strings.Builder{}, report)
 	}
@@ -51,7 +43,6 @@ func BenchmarkWriteText(b *testing.B) {
 func BenchmarkWriteJSON(b *testing.B) {
 	report := reportForBench()
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		_ = WriteJSON(&strings.Builder{}, report)
 	}
@@ -61,7 +52,6 @@ func BenchmarkWriteJSON(b *testing.B) {
 func BenchmarkWriteMarkdown(b *testing.B) {
 	report := reportForBench()
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
 		_ = WriteMarkdown(&strings.Builder{}, report, "")
 	}
@@ -74,9 +64,8 @@ func BenchmarkComputeStats(b *testing.B) {
 		samples[i] = float64(100 + i)
 	}
 	b.ReportAllocs()
-	b.ResetTimer()
 	for b.Loop() {
-		sinkBench = computeStats(samples)
+		computeStats(samples)
 	}
 }
 
