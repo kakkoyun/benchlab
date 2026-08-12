@@ -15,6 +15,8 @@ disable-model-invocation: false
 
 # benchstat-gate
 
+Run `honest-benchmark` first. Source structure must be correct before sample stability means anything. This skill is the second stage: stabilize repeated samples and compare them statistically. If variance remains high, hand off to `diagnose-noisy-bench` for environment inspection.
+
 `benchgate` is a Go CLI that wraps `go test -bench` to collect benchmark samples,
 compare base and candidate results with Mann-Whitney U test statistics
 (`golang.org/x/perf/benchmath.AssumeNothing`), and emit a verdict that can

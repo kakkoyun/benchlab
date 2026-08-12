@@ -19,33 +19,47 @@ Install all three skills for your coding agents:
 npx skills add kakkoyun/benchlab --all
 ```
 
-Install one skill for one agent:
-
-```bash
-npx skills add kakkoyun/benchlab --skill honest-benchmark -a claude-code
-```
-
 | Command | Skill | Question |
 | --- | --- | --- |
-| `honestbench` | `honest-benchmark` | Is the compiler measuring real work? |
+| `honestbench` | `honest-benchmark` | Is the source structurally honest? |
 | `benchgate` | `benchstat-gate` | Is the sample stable enough? |
 | `benchenv` | `diagnose-noisy-bench` | What is making the benchmark noisy? |
 
+<<<<<<< HEAD
 The tools are no longer stdlib-only: `benchgate` depends on `golang.org/x/perf` for benchmark parsing and statistical comparison. `honestbench` and `benchenv` remain stdlib-only. The skills teach coding agents when to run them, how to interpret their output, and how to fix the problems they find.
+||||||| parent of 8ac6acb (feat(honestbench): expand benchmark analysis)
+The commands are stdlib-only Go programs. The skills teach coding agents when to run them, how to interpret their output, and how to fix the problems they find.
+=======
+Use them in that order: fix structural errors, stabilize repeated samples, then diagnose the machine when variance remains high.
+
+`benchgate` and `benchenv` are stdlib implementations. `honestbench` uses `golang.org/x/tools/go/analysis` so it can resolve types and run through standard analyzer drivers.
+>>>>>>> 8ac6acb (feat(honestbench): expand benchmark analysis)
 
 ## honestbench
 
-`honestbench` parses Go benchmark source with `go/ast`. It reports discarded results, missing sinks, timer ordering mistakes, and `b.N` loops that can migrate to `testing.B.Loop`.
+`honestbench` checks active `*_test.go` packages with a type-aware analyzer. Default diagnostics cover benchmark iteration, timer, subbenchmark, and `RunParallel` correctness. `-advisory` enables migration and design heuristics.
 
 ```bash
-honestbench -r ./...
-honestbench -json ./mypkg | jq .
+honestbench ./...
+honestbench -advisory ./...
+honestbench -json ./...
 
 # Run without installing
-go run github.com/kakkoyun/benchlab/cmd/honestbench@latest -r ./...
+go run github.com/kakkoyun/benchlab/cmd/honestbench@latest ./...
 ```
 
-Exit codes: `0` for no findings, `1` for findings, and `2` for an error.
+Use it as a vet tool:
+
+```bash
+go build -o /tmp/honestbench ./cmd/honestbench
+go vet -vettool=/tmp/honestbench ./...
+```
+
+`-json` is the standard `go/analysis` JSON object keyed by package and analyzer, not the v0.0 custom finding array. The command exits zero when clean and nonzero otherwise; exact nonzero codes belong to the upstream analysis driver.
+
+This is an accepted v0.1 breaking change: file paths, `-r`, `-q`, custom severities, and the custom JSON array were removed in favor of package patterns and standard driver output. The analyzer remains internal and is not a supported Go library API.
+
+See the [rule catalog](docs/honestbench-rules.md) and [runnable examples](examples/honestbench).
 
 ## benchgate
 
@@ -164,6 +178,9 @@ npx skills add kakkoyun/benchlab
 
 # Install every benchlab skill globally for every supported agent
 npx skills add kakkoyun/benchlab --all -g
+
+# Install one skill for one agent
+npx skills add kakkoyun/benchlab --skill honest-benchmark -a claude-code
 ```
 
 Each skill includes a `go run github.com/kakkoyun/benchlab/cmd/<tool>@latest` path, so an agent can use the command without a separate installation step.

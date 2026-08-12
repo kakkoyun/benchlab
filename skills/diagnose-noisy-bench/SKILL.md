@@ -12,6 +12,8 @@ disable-model-invocation: false
 
 # diagnose-noisy-bench
 
+Use this after `honest-benchmark` has made the source structurally correct and `benchstat-gate` has shown unstable repeated samples. Environment controls cannot repair a benchmark that measures the wrong work.
+
 Runs `benchenv` to diagnose the benchmarking environment. It distinguishes the local machine, the running process, the connected Docker engine/VM, and a probe container, then emits prioritized guidance for improving benchmark reliability.
 
 ## Run the CLI
