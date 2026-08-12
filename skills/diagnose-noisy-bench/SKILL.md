@@ -1,7 +1,7 @@
 ---
 name: diagnose-noisy-bench
 description: |
-  Diagnoses the current machine's benchmarking environment and reports active noise sources with remedies.
+  Diagnoses the current machine's benchmarking environment and reports active noise sources with prioritized guidance.
   Wraps the `benchenv` CLI from github.com/kakkoyun/benchlab.
   USE WHEN: "diagnose noisy benchmark", "why is my benchmark flaky", "check benchmarking environment",
   "benchmark variance too high", "benchmark results unreliable", "set up for benchmarking".
@@ -12,7 +12,7 @@ disable-model-invocation: false
 
 # diagnose-noisy-bench
 
-Runs `benchenv` to probe the local machine for benchmark noise sources and reports what to fix.
+Runs `benchenv` to diagnose the benchmarking environment. It distinguishes the local machine, the running process, the connected Docker engine/VM, and a probe container, then emits prioritized guidance for improving benchmark reliability.
 
 ## Run the CLI
 
@@ -36,77 +36,75 @@ benchenv
 
 # Machine-readable JSON (for scripting / CI)
 benchenv -json
+
+# Strict mode: exit 1 unless the environment is publication-grade
+benchenv -strict
 ```
 
-Exit 0 always (diagnostic tool). Exit 2 on internal error (e.g. JSON encode failure).
+## Exit codes
 
-## Interpreting the output
+| Code | Default mode | `-strict` mode |
+|---|---|---|
+| `0` | Diagnosis completed | Overall grade is `ready` |
+| `1` | — | Overall grade is not `ready` (limited, not_ready, unavailable) |
+| `2` | CLI usage or encoding error | CLI usage or encoding error |
 
-Each check reports one of three statuses:
+Under `-strict`, macOS and VM-backed environments exit `1` because they cannot be certified as publication-grade. Use `-strict` in CI gates that require publication-grade evidence.
 
-| Status | Meaning |
+## Understanding readiness
+
+The report grades two execution paths — **native** and **docker** — and selects the best viable path as the overall recommendation.
+
+| Grade | Meaning |
 |---|---|
-| `[ok]` | No action needed |
-| `[warn]` | Active noise source — follow the remedy shown on that line |
-| `[unavailable]` | Probe not supported on this OS/hardware — informational only |
+| `ready` | Publication-grade: native bare-metal Linux, no active host-noise findings, native architecture, passing isolation probe (Docker path) |
+| `limited` | No fixable blocker, but cannot be certified (macOS, VM-backed engine, unknown backend) |
+| `not_ready` | Active fixable hazard: QEMU/cross-arch, missing CPU isolation, noisy CPU controls, high load, Low Power Mode, failed cgroup limits |
+| `unavailable` | That path cannot be used (no Docker daemon) |
 
-On **macOS**, SMT, Turbo Boost, and the CPU frequency governor are all `unavailable` — the OS does not expose these controls. This is expected. Use a Linux machine or CI runner for publication-quality numbers.
+**Key distinction**: a VM-backed engine (Colima, Docker Desktop) can pass its cgroup isolation probe, but VM vCPU pinning is **not** physical-core pinning. Such environments are `limited`, not `ready`. Do not mistake VM cgroup isolation for physical-core isolation.
 
-On **Linux**, all five platform checks probe live sysfs/procfs. `unavailable` there usually means a VM guest (hypervisor owns the CPU controls).
+Optional analysis tools (`benchstat`, `benchdiff`, `perflock`) do not affect readiness. Docker being unavailable does not prevent a clean native Linux path from being `ready`.
 
-## Ordered remediation
+## Following the prioritized actions
 
-Apply in this order — each step compounds on the previous:
+The `actions` field (and the "Prioritized actions" text section) lists guidance ordered by impact. Apply in order — each step compounds on the previous:
 
-1. **Install perflock** (`[warn] perflock not installed`):
+1. **Remove translation / QEMU** (priority 1): If running under Rosetta or QEMU cross-architecture emulation, switch to native binaries or a native-arch engine. For Colima x86_64 on Apple Silicon, create a non-destructive benchmark profile:
    ```bash
-   go install github.com/aclements/perflock@latest
+   colima start --profile benchlab --arch aarch64 --vm-type vz --cpu 4 --memory 8
+   docker context use colima-benchlab
    ```
-   Prefix every benchmark run with `perflock go test -bench=. ...`.
-   This is the single highest-value local tool on Linux. On macOS it installs but has limited effect.
 
-2. **CPU affinity** (Linux, no extra tool needed):
-   ```bash
-   taskset -c 0 go test -bench=. -count=10 -benchtime=2s ./...
-   ```
-   Prevents OS scheduler migration between runs. Zero-cost once you know the command.
+2. **Move to certifiable hardware** (priority 2): macOS cannot control or certify the physical CPU. VM-backed engines cannot provide physical-core isolation. Use a Linux bare-metal runner for publication-quality numbers.
 
-3. **Disable SMT** (`[warn] SMT control`, Linux bare metal only):
-   ```bash
-   echo off | sudo tee /sys/devices/system/cpu/smt/control
-   # Re-enable after benchmarking
-   echo on  | sudo tee /sys/devices/system/cpu/smt/control
-   ```
-   Verified ~100× CV improvement on CPU-bound benchmarks (see [CI environment controls §3](https://github.com/kakkoyun/benchlab/blob/main/docs/research/04-ci-continuous.md#3-environment-controls-at-the-runner-level)).
+3. **Stabilize CPU controls** (priority 3, Linux bare-metal): Disable SMT, set performance governor, disable Turbo Boost. These are the highest-value Linux controls.
 
-4. **Set performance governor / disable Turbo Boost** (`[warn] CPU frequency governor`, Linux):
-   ```bash
-   echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
-   echo 1           | sudo tee /sys/devices/system/cpu/intel_pstate/no_turbo  # Intel
-   echo 0           | sudo tee /sys/devices/system/cpu/cpufreq/boost           # AMD
-   ```
-   Verified ~10× CV improvement on top of SMT disable (see [CI environment controls §3](https://github.com/kakkoyun/benchlab/blob/main/docs/research/04-ci-continuous.md#3-environment-controls-at-the-runner-level)).
+4. **Enforce Docker isolation** (priority 4): Use the verified CPU, CPU quota, and memory/swap limits from the probe. The generated Docker recipe includes the correct flags.
 
-5. **Reduce background load** (`[warn] load average`):
-   Close browser, IDE, Slack, and any other CPU-hungry processes before capturing numbers.
+5. **Reduce power / load / thermal noise** (priority 5): Connect AC power, disable Low Power Mode, close background applications, let the machine cool.
 
-6. **Install benchstat and benchdiff** if warned:
-   ```bash
-   go install golang.org/x/perf/cmd/benchstat@latest
-   go install github.com/willabides/benchdiff/cmd/benchdiff@latest
-   ```
-   `benchstat` performs statistical A/B comparison. `benchdiff` automates the git stash/run/compare cycle.
-   Together with `perflock`, these form the local benchmarking trinity. See [the Go-native local A/B loop](https://github.com/kakkoyun/benchlab/blob/main/docs/research/03-local-reproduction.md#7-the-go-native-local-ab-loop).
+6. **Install optional analysis tools** (priority 6): `perflock`, `benchstat`, `benchdiff`.
 
-## macOS pragmatic workflow
+## Using the generated recipes
 
-On macOS without a Linux machine:
+The `recipes` field provides copy-paste benchmark commands tailored to the platform:
 
-1. Install `perflock` and prefix every run with it.
-2. Use `-count=20 -benchtime=2s` — more samples partially compensate for the higher noise floor.
-3. Watch the `±` column in `benchstat` output. CV > 5% means the environment is too noisy to act on.
-4. Use `benchdiff` for A/B comparisons — ensures both sides run in the same environment.
-5. Reserve publication-quality numbers for a Linux CI runner.
+- **Linux native**: `taskset -c 0 perflock go test -bench=. -benchmem -count=10 -benchtime=2s ./...`
+- **macOS native**: `go test -bench=. -benchmem -count=20 -benchtime=2s ./...` (more samples to compensate for higher noise)
+- **Local Docker**: includes `--platform`, `--cpuset-cpus` (verified by probe), `--cpus=1`, `--memory=512m`, `--memory-swap=512m`, working-directory mount, and the Go benchmark command.
+
+Never execute the user's benchmark automatically. The recipes are guidance for the user to run manually.
+
+## JSON contract
+
+The JSON output preserves legacy fields (`os`, `arch`, `numcpu`, `checks`, `summary`) and adds:
+
+- `platform`: architecture, CPU model, virtualization, translation, power/load/thermal facts, evidence source.
+- `docker`: availability, context/endpoint, backend, engine OS/arch, translation, VM resources, isolation probe result.
+- `readiness`: `overall`, `recommended_path`, `native`, `docker` grades.
+- `actions`: ordered, deduplicated guidance with scope, reason, and commands.
+- `recipes`: native and Docker benchmark commands when that path is usable.
 
 ## References
 
