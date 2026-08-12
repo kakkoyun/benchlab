@@ -25,15 +25,9 @@ npx skills add kakkoyun/benchlab --all
 | `benchgate` | `benchstat-gate` | Is the sample stable enough? |
 | `benchenv` | `diagnose-noisy-bench` | What is making the benchmark noisy? |
 
-<<<<<<< HEAD
-The tools are no longer stdlib-only: `benchgate` depends on `golang.org/x/perf` for benchmark parsing and statistical comparison. `honestbench` and `benchenv` remain stdlib-only. The skills teach coding agents when to run them, how to interpret their output, and how to fix the problems they find.
-||||||| parent of 8ac6acb (feat(honestbench): expand benchmark analysis)
-The commands are stdlib-only Go programs. The skills teach coding agents when to run them, how to interpret their output, and how to fix the problems they find.
-=======
 Use them in that order: fix structural errors, stabilize repeated samples, then diagnose the machine when variance remains high.
 
-`benchgate` and `benchenv` are stdlib implementations. `honestbench` uses `golang.org/x/tools/go/analysis` so it can resolve types and run through standard analyzer drivers.
->>>>>>> 8ac6acb (feat(honestbench): expand benchmark analysis)
+The tools are no longer stdlib-only. `benchgate` depends on `golang.org/x/perf` for benchmark parsing and statistical comparison. `honestbench` uses `golang.org/x/tools/go/analysis` for type-aware checks and standard analyzer drivers. `benchenv` remains a stdlib implementation.
 
 ## honestbench
 
