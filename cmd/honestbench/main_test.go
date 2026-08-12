@@ -112,7 +112,10 @@ func BenchmarkMissing(b *testing.B) {}
 `)
 		output, err := runCommand(bad, "go", "vet", "-vettool="+binary, "./...")
 		if err != nil {
-			t.Fatalf("JSON-mode vettool invocation failed: %v\n%s", err, output)
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				t.Fatalf("vettool failed without a process exit: %v\n%s", err, output)
+			}
 		}
 		if !strings.Contains(string(output), "benchmark scope has no B.Loop") {
 			t.Fatalf("vettool output does not contain missing-loop diagnostic:\n%s", output)
