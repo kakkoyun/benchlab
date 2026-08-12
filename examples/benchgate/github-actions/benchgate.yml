@@ -1,0 +1,33 @@
+name: benchgate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchgate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  benchgate:
+    name: benchgate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: kakkoyun/benchlab/actions/benchgate@v0.2.0
+        with:
+          go-version: stable
+          count: '10'
+          benchtime: 1s
+          cv-threshold: '5'
+          runtime-threshold: '10'
+          alpha: '0.05'
+          min-samples: '10'
+          retention-days: '14'
