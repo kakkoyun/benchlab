@@ -29,15 +29,16 @@ const (
 )
 
 type loopInfo struct {
-	stmt       ast.Stmt
-	body       *ast.BlockStmt
-	parent     *ast.BlockStmt
-	index      int
-	kind       loopKind
-	canonical  bool
-	wrongCount bool
-	recv       types.Object
-	indexObj   types.Object
+	stmt          ast.Stmt
+	body          *ast.BlockStmt
+	parent        *ast.BlockStmt
+	index         int
+	kind          loopKind
+	canonical     bool
+	wrongCount    bool
+	recv          types.Object
+	indexObj      types.Object
+	indexAssigned bool
 }
 
 type scopeFacts struct {
@@ -372,6 +373,9 @@ func (r *runner) classifyLoop(stmt ast.Stmt, parent *ast.BlockStmt, index int, a
 			info.kind, info.recv, info.indexObj = bNLoop, recv, indexObj
 			info.canonical = classification == bNLoop
 			info.wrongCount = classification == unusualBNLoop
+			if assign, ok := loop.Init.(*ast.AssignStmt); ok {
+				info.indexAssigned = assign.Tok == token.ASSIGN
+			}
 			return info
 		}
 		if recv, ok := r.exactTestingLoopCall(loop.Cond, "Next", activePB); ok && loop.Init == nil && loop.Post == nil {
@@ -391,6 +395,7 @@ func (r *runner) classifyLoop(stmt ast.Stmt, parent *ast.BlockStmt, index int, a
 					info.indexObj = r.pass.TypesInfo.Defs[id]
 				} else {
 					info.indexObj = r.pass.TypesInfo.Uses[id]
+					info.indexAssigned = true
 				}
 			}
 			return info

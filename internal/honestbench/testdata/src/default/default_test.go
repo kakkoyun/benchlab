@@ -56,6 +56,14 @@ func BenchmarkUnknownTimerEffect(b *t.B) {
 	}
 }
 
+func BenchmarkKnownStopAfterUnknown(b *t.B) {
+	for b.Loop() {
+		externalhelper.MaybeControlTimer(b)
+		b.StopTimer() // want "reachable iteration path stops timing"
+		consume(work())
+	}
+}
+
 func BenchmarkMissingLoop(b *t.B) { // want "benchmark scope has no B.Loop"
 	consume(work())
 }
@@ -161,6 +169,74 @@ func BenchmarkTimerBranchMissingStart(b *t.B) {
 		if work() > 0 {
 			b.StartTimer()
 		}
+		consume(work())
+	}
+}
+
+func BenchmarkConditionWorkWhileStopped(b *t.B) {
+	for b.Loop() {
+		b.StopTimer() // want "every reachable work statement"
+		if work() > 0 {
+		}
+		b.StartTimer()
+	}
+}
+
+func BenchmarkSwitchDefaultRestartsTimer(b *t.B) {
+	for b.Loop() {
+		b.StopTimer()
+		switch work() {
+		case 0:
+			b.StartTimer()
+		default:
+			b.StartTimer()
+		}
+		consume(work())
+	}
+}
+
+func BenchmarkTypeSwitchStoppedWork(b *t.B) {
+	for b.Loop() {
+		b.StopTimer() // want "every reachable work statement"
+		switch value := any(work()).(type) {
+		case int:
+			consume(value)
+		default:
+			consume(0)
+		}
+		b.StartTimer()
+	}
+}
+
+func BenchmarkSelectStoppedWork(b *t.B) {
+	ch := make(chan int, 1)
+	ch <- 1
+	for b.Loop() {
+		b.StopTimer() // want "every reachable work statement"
+		select {
+		case value := <-ch:
+			consume(value)
+		default:
+			consume(0)
+		}
+		b.StartTimer()
+	}
+}
+
+func BenchmarkReturnTerminatesPath(b *t.B) {
+	for b.Loop() {
+		if work() > 0 {
+			b.StopTimer()
+			return
+		}
+		consume(work())
+	}
+}
+
+func BenchmarkUnreachableAfterReturn(b *t.B) {
+	for b.Loop() {
+		return
+		b.StopTimer()
 		consume(work())
 	}
 }
@@ -313,6 +389,12 @@ func BenchmarkShadowedReceiver(b *t.B) {
 			consume(b.N)
 		}
 	}
+}
+
+type benchmarkMethodHolder struct{}
+
+func (benchmarkMethodHolder) BenchmarkMethod(b *t.B) {
+	consume(work())
 }
 
 // Fake testing-like names must not be treated as the real testing API.

@@ -46,7 +46,7 @@ Legacy `b.N` loops still need observable work. A package sink can be a fallback,
 
 ## Output
 
-`honestbench` uses standard `go/analysis` text and JSON output. It exits zero when clean and nonzero otherwise. `-advisory` is off by default.
+`honestbench` uses standard `go/analysis` text and JSON output. Text mode exits nonzero on diagnostics. The upstream `-json` driver exits zero after emitting valid JSON even when diagnostics are present, so inspect the payload instead of relying on status. `-advisory` is off by default.
 
 ## References
 

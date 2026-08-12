@@ -55,7 +55,7 @@ go build -o /tmp/honestbench ./cmd/honestbench
 go vet -vettool=/tmp/honestbench ./...
 ```
 
-`-json` is the standard `go/analysis` JSON object keyed by package and analyzer, not the v0.0 custom finding array. The command exits zero when clean and nonzero otherwise; exact nonzero codes belong to the upstream analysis driver.
+`-json` is the standard `go/analysis` JSON object keyed by package and analyzer, not the v0.0 custom finding array. In normal text mode, diagnostics produce a nonzero exit. The upstream JSON driver exits zero after successfully emitting its payload even when the payload contains diagnostics, so JSON consumers must inspect the output rather than gate on status alone. `go vet -vettool` exit behavior is controlled by the installed Go toolchain.
 
 This is an accepted v0.1 breaking change: file paths, `-r`, `-q`, custom severities, and the custom JSON array were removed in favor of package patterns and standard driver output. The analyzer remains internal and is not a supported Go library API.
 

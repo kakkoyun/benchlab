@@ -22,52 +22,57 @@ func (r *runner) checkTimedSetupCleanup(loop *loopInfo, facts *scopeFacts) {
 	if loop.parent == nil {
 		return
 	}
-	resetBefore := false
+	setupStart := 0
+	var deferred []*ast.DeferStmt
 	for i := 0; i < loop.index; i++ {
 		stmt := loop.parent.List[i]
-		if call := callExpression(stmt); call != nil {
-			recv, method, family := r.testingMethod(call)
-			if family == "B" && facts.activeReceiver(recv, loop.recv) && method == "ResetTimer" {
-				resetBefore = true
-			}
+		if deferStmt, ok := stmt.(*ast.DeferStmt); ok {
+			deferred = append(deferred, deferStmt)
+		}
+		if r.isActiveTimerCall(stmt, facts, loop.recv, "ResetTimer") {
+			setupStart = i + 1
 		}
 	}
-	if !resetBefore {
-		for i := 0; i < loop.index; i++ {
-			stmt := loop.parent.List[i]
-			if isNontrivialStatement(stmt) {
-				r.report(stmt.Pos(), stmt.End(), "timed-setup", "nontrivial setup before a legacy b.N loop is included in the benchmark timing")
-				break
-			}
+	for i := setupStart; i < loop.index; i++ {
+		stmt := loop.parent.List[i]
+		if isNontrivialStatement(stmt) {
+			r.report(stmt.Pos(), stmt.End(), "timed-setup", "nontrivial setup before a legacy b.N loop is included in the benchmark timing")
+			break
 		}
 	}
 
-	stopAfter := false
+	timerStopped := false
+	cleanupReported := false
 	for i := loop.index + 1; i < len(loop.parent.List); i++ {
 		stmt := loop.parent.List[i]
-		if call := callExpression(stmt); call != nil {
-			recv, method, family := r.testingMethod(call)
-			if family == "B" && facts.activeReceiver(recv, loop.recv) && method == "StopTimer" {
-				stopAfter = true
-				break
-			}
+		if r.isActiveTimerCall(stmt, facts, loop.recv, "StopTimer") {
+			timerStopped = true
+			continue
+		}
+		if r.isActiveTimerCall(stmt, facts, loop.recv, "StartTimer") || r.isActiveTimerCall(stmt, facts, loop.recv, "ResetTimer") {
+			timerStopped = false
+			continue
+		}
+		if !timerStopped && !cleanupReported && isNontrivialCleanup(stmt) {
+			r.report(stmt.Pos(), stmt.End(), "timed-cleanup", "nontrivial cleanup after a legacy b.N loop remains in the measured interval")
+			cleanupReported = true
 		}
 	}
-	if !stopAfter {
-		for i := loop.index + 1; i < len(loop.parent.List); i++ {
-			stmt := loop.parent.List[i]
-			if isNontrivialCleanup(stmt) {
-				r.report(stmt.Pos(), stmt.End(), "timed-cleanup", "nontrivial cleanup after a legacy b.N loop remains in the measured interval")
-				break
-			}
-		}
-	}
-	for _, stmt := range loop.parent.List[:loop.index] {
-		if deferStmt, ok := stmt.(*ast.DeferStmt); ok {
+	if !timerStopped {
+		for _, deferStmt := range deferred {
 			r.report(deferStmt.Pos(), deferStmt.End(), "timed-cleanup", "deferred cleanup remains in the measured interval of this legacy b.N benchmark")
 			break
 		}
 	}
+}
+
+func (r *runner) isActiveTimerCall(stmt ast.Stmt, facts *scopeFacts, recv types.Object, method string) bool {
+	call := callExpression(stmt)
+	if call == nil {
+		return false
+	}
+	actual, actualMethod, family := r.testingMethod(call)
+	return family == "B" && facts.activeReceiver(actual, recv) && actualMethod == method
 }
 
 func isNontrivialStatement(stmt ast.Stmt) bool {
@@ -149,6 +154,25 @@ func (r *runner) checkMissingSink(loop *loopInfo) {
 	if len(assigned) == 0 || loop.parent == nil {
 		return
 	}
+	observedInLoop := make(map[types.Object]bool)
+	ast.Inspect(loop.body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		for _, arg := range call.Args {
+			ast.Inspect(arg, func(node ast.Node) bool {
+				id, ok := node.(*ast.Ident)
+				if ok {
+					if obj := r.pass.TypesInfo.Uses[id]; assigned[obj] != token.NoPos {
+						observedInLoop[obj] = true
+					}
+				}
+				return true
+			})
+		}
+		return true
+	})
 	observed := make(map[types.Object]bool)
 	blankOnly := make(map[types.Object]bool)
 	for i := loop.index + 1; i < len(loop.parent.List); i++ {
@@ -176,7 +200,7 @@ func (r *runner) checkMissingSink(loop *loopInfo) {
 		})
 	}
 	for obj, pos := range assigned {
-		if !observed[obj] {
+		if !observed[obj] && !observedInLoop[obj] {
 			message := "legacy-loop result has no observable use after the loop"
 			if blankOnly[obj] {
 				message = "legacy-loop result is used only by a blank assignment after the loop"
@@ -250,7 +274,7 @@ func (r *runner) isKnownInPlaceMutator(call *ast.CallExpr) bool {
 	switch fn.Pkg().Path() {
 	case "sort":
 		switch fn.Name() {
-		case "Ints", "Float64s", "Strings", "Slice", "SliceStable", "Sort", "Stable", "Reverse":
+		case "Ints", "Float64s", "Strings", "Slice", "SliceStable", "Sort", "Stable":
 			return true
 		}
 	case "slices":

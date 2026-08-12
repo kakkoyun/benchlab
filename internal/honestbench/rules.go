@@ -285,7 +285,7 @@ func isTrueConstant(pass *analysis.Pass, expr ast.Expr) bool {
 }
 
 func (r *runner) suggestBLoopFix(loop *loopInfo) []analysis.SuggestedFix {
-	if r.isGenerated(loop.stmt.Pos()) || r.hasCommentBetween(loop.stmt.Pos(), loop.body.Lbrace) || !r.loopIndexUnused(loop) {
+	if r.isGenerated(loop.stmt.Pos()) || loop.indexAssigned || r.hasCommentBetween(loop.stmt.Pos(), loop.body.Lbrace) || !r.loopIndexUnused(loop) {
 		return nil
 	}
 	name := loop.recv.Name()

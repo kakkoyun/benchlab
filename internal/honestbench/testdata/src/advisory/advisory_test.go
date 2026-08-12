@@ -32,6 +32,14 @@ func BenchmarkResetTimerExcludesSetup(b *testing.B) {
 	}
 }
 
+func BenchmarkSetupAfterReset(b *testing.B) {
+	b.ResetTimer()
+	input := value() // want "nontrivial setup before a legacy b.N loop"
+	for range b.N {  // want "canonical b.N loop can use"
+		consume(input)
+	}
+}
+
 func BenchmarkTimedCleanup(b *testing.B) {
 	var result int  // want "nontrivial setup before a legacy b.N loop"
 	for range b.N { // want "canonical b.N loop can use"
@@ -47,6 +55,23 @@ func BenchmarkStopTimerExcludesCleanup(b *testing.B) {
 	}
 	b.StopTimer()
 	consume(result)
+}
+
+func BenchmarkCleanupBeforeStop(b *testing.B) {
+	var result int  // want "nontrivial setup before a legacy b.N loop"
+	for range b.N { // want "canonical b.N loop can use"
+		result = value()
+	}
+	consume(result) // want "nontrivial cleanup after a legacy b.N loop"
+	b.StopTimer()
+}
+
+func BenchmarkDeferredCleanupStopped(b *testing.B) {
+	defer consume(value()) // want "nontrivial setup before a legacy b.N loop"
+	for range b.N {        // want "canonical b.N loop can use"
+		consume(value())
+	}
+	b.StopTimer()
 }
 
 func BenchmarkDeferredCleanup(b *testing.B) {
@@ -74,6 +99,13 @@ func BenchmarkMissingSink(b *testing.B) {
 		result = value() // want "result is used only by a blank assignment"
 	}
 	_ = result
+}
+
+func BenchmarkInLoopSink(b *testing.B) {
+	for range b.N { // want "canonical b.N loop can use"
+		result := value()
+		consume(result)
+	}
 }
 
 func BenchmarkPackageWrite(b *testing.B) {
@@ -116,10 +148,17 @@ func BenchmarkReusedSlicesInput(b *testing.B) {
 	}
 }
 
+func BenchmarkSortReverseWrapper(b *testing.B) {
+	input := sort.IntSlice{3, 2, 1} // want "nontrivial setup before a legacy b.N loop"
+	for range b.N {                 // want "canonical b.N loop can use"
+		consume(sort.Reverse(input).Len())
+	}
+}
+
 func BenchmarkReassignedInput(b *testing.B) {
 	input := []int{3, 2, 1} // want "nontrivial setup before a legacy b.N loop"
 	for range b.N {         // want "canonical b.N loop can use"
-		input = []int{3, 2, 1} // want "result has no observable use"
+		input = []int{3, 2, 1}
 		sort.Ints(input)
 	}
 }

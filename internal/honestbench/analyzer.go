@@ -127,7 +127,7 @@ func (r *runner) run() error {
 		}
 		for _, decl := range file.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || fd.Body == nil || !isBenchmarkName(fd.Name.Name) {
+			if !ok || fd.Recv != nil || fd.Body == nil || !isBenchmarkName(fd.Name.Name) {
 				continue
 			}
 			fn, _ := r.pass.TypesInfo.Defs[fd.Name].(*types.Func)
