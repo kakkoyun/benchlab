@@ -26,7 +26,7 @@ npx skills add kakkoyun/benchlab --skill honest-benchmark -a claude-code
 ```
 
 | Command | Skill | Question |
-|---|---|---|
+| --- | --- | --- |
 | `honestbench` | `honest-benchmark` | Is the compiler measuring real work? |
 | `benchgate` | `benchstat-gate` | Is the sample stable enough? |
 | `benchenv` | `diagnose-noisy-bench` | What is making the benchmark noisy? |

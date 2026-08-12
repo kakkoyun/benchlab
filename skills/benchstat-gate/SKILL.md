@@ -66,7 +66,7 @@ go run github.com/kakkoyun/benchlab/cmd/benchgate@latest compare -base before.tx
 ### Verdicts
 
 | Verdict | Exit code | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `PASS` | 0 | All gated series passed or improved |
 | `REGRESSION` | 1 | At least one gated series regressed beyond threshold |
 | `INCONCLUSIVE` | 1 | At least one series could not be decided (insufficient samples, high CV, missing unit, or statistical warning) |
@@ -109,7 +109,7 @@ one-shot `benchgate:accept-regression` waiver label.
 ## Flags (compare and run)
 
 | Flag | Default | Description |
-|------|---------|-------------|
+| ------ | --------- | ------------- |
 | `-pkg` | `./...` | Package pattern passed to `go test` |
 | `-bench` | `.` | Benchmark regexp |
 | `-count` | `10` | Number of samples per side |
@@ -136,9 +136,11 @@ High CV means the OS scheduler, frequency scaling, or competing processes are
 drowning the signal. Before tuning code, stabilise the measurement:
 
 - **Linux:** pin to an isolated core and disable frequency scaling:
+
   ```bash
   perflock -governor performance taskset -c 2 go test -bench=. -count=20 ./...
   ```
+
 - **macOS:** close background apps, disable Spotlight indexing, and prefer
   `-benchtime 5s` to amortise timer jitter over longer runs.
 - **CI:** run benchmarks on a dedicated bare-metal runner, not a shared VM.

@@ -130,7 +130,7 @@ The reporter uses `issues: write` to create/update the sticky PR comment and to 
 ## Inputs
 
 | Input | Default | Description |
-|---|---|---|
+| --- | --- | --- |
 | `pkg` | `./...` | Package pattern to benchmark |
 | `bench` | `.` | Benchmark regexp |
 | `workdir` | `.` | Working directory for the candidate checkout |
@@ -150,7 +150,7 @@ The reporter uses `issues: write` to create/update the sticky PR comment and to 
 ## Verdicts
 
 | Verdict | Exit code | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `PASS` | 0 | All gated series passed or improved |
 | `REGRESSION` | 1 | At least one gated series regressed beyond threshold |
 | `INCONCLUSIVE` | 1 | At least one series could not be decided |
@@ -191,7 +191,7 @@ See `docs/research/04-ci-continuous.md` for detailed noise data and environment 
 ## Troubleshooting
 
 | Problem | Cause | Fix |
-|---|---|---|
+| --- | --- | --- |
 | `no comparable gated series found` | Base and candidate have no common benchmarks | Check that the benchmark pattern matches on both sides |
 | `incompatible benchmark environments` | GOOS, GOARCH, CPU, or Go version differ | Use the same runner for both sides; or set `allow-env-mismatch` |
 | `INCONCLUSIVE: insufficient samples` | Fewer than `min-samples` per side | Increase `count` |
