@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-GO_FILES := $(shell find cmd internal -name '*.go' -type f -print | sort)
+GO_FILES := $(shell find cmd internal examples -name '*.go' -type f ! -name '*.golden' -print | sort)
 
 .DEFAULT_GOAL := help
 
@@ -31,6 +31,9 @@ lint:
 	typos README.md skills docs .github
 
 check: lint build test
+	go run ./cmd/honestbench ./...
+	go run ./cmd/honestbench -advisory ./...
+	go test -run='^$$' -bench=. -benchtime=1x -count=1 ./examples/honestbench
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ./...
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build ./...
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build ./...
