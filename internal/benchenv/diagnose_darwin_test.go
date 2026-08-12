@@ -1,3 +1,5 @@
+//go:build darwin
+
 package benchenv
 
 import (
@@ -5,9 +7,9 @@ import (
 	"testing"
 )
 
-// TestDiagnoseFullPipeline verifies the full Diagnose pipeline produces a
-// complete report with all fields populated.
-func TestDiagnoseFullPipeline(t *testing.T) {
+// TestDiagnoseFullPipelineDarwin verifies the full Diagnose pipeline on
+// macOS produces a complete report with all fields populated.
+func TestDiagnoseFullPipelineDarwin(t *testing.T) {
 	exec := &fakeExec{
 		runFn: func(name string, args ...string) (string, error) {
 			switch {
@@ -116,8 +118,9 @@ func TestDiagnoseFullPipeline(t *testing.T) {
 	}
 }
 
-// TestDiagnoseDockerUnavailable verifies Docker absence doesn't break Diagnose.
-func TestDiagnoseDockerUnavailable(t *testing.T) {
+// TestDiagnoseDockerUnavailableDarwin verifies Docker absence doesn't break
+// Diagnose on macOS.
+func TestDiagnoseDockerUnavailableDarwin(t *testing.T) {
 	exec := &fakeExec{
 		runFn: func(name string, args ...string) (string, error) {
 			switch {

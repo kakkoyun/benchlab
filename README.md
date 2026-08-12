@@ -26,7 +26,7 @@ npx skills add kakkoyun/benchlab --skill honest-benchmark -a claude-code
 ```
 
 | Command | Skill | Question |
-|---|---|---|
+| --- | --- | --- |
 | `honestbench` | `honest-benchmark` | Is the compiler measuring real work? |
 | `benchgate` | `benchstat-gate` | Is the sample stable enough? |
 | `benchenv` | `diagnose-noisy-bench` | What is making the benchmark noisy? |
@@ -77,7 +77,7 @@ When a local Docker daemon is reachable and `benchenv` is not itself containeriz
 ### Readiness grades
 
 | Grade | Meaning |
-|---|---|
+| --- | --- |
 | `ready` | Publication-grade evidence: native bare-metal Linux, no active critical host-noise findings, native architecture, passing isolation probe |
 | `limited` | No fixable blocker, but the environment cannot be certified (macOS, VM-backed engine, unknown backend) |
 | `not_ready` | Active fixable hazard: QEMU/cross-arch, missing CPU isolation, noisy CPU controls, high load, Low Power Mode, failed cgroup limits |

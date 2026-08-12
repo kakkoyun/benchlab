@@ -44,7 +44,7 @@ benchenv -strict
 ## Exit codes
 
 | Code | Default mode | `-strict` mode |
-|---|---|---|
+| --- | --- | --- |
 | `0` | Diagnosis completed | Overall grade is `ready` |
 | `1` | — | Overall grade is not `ready` (limited, not_ready, unavailable) |
 | `2` | CLI usage or encoding error | CLI usage or encoding error |
@@ -56,7 +56,7 @@ Under `-strict`, macOS and VM-backed environments exit `1` because they cannot b
 The report grades two execution paths — **native** and **docker** — and selects the best viable path as the overall recommendation.
 
 | Grade | Meaning |
-|---|---|
+| --- | --- |
 | `ready` | Publication-grade: native bare-metal Linux, no active host-noise findings, native architecture, passing isolation probe (Docker path) |
 | `limited` | No fixable blocker, but cannot be certified (macOS, VM-backed engine, unknown backend) |
 | `not_ready` | Active fixable hazard: QEMU/cross-arch, missing CPU isolation, noisy CPU controls, high load, Low Power Mode, failed cgroup limits |
@@ -71,6 +71,7 @@ Optional analysis tools (`benchstat`, `benchdiff`, `perflock`) do not affect rea
 The `actions` field (and the "Prioritized actions" text section) lists guidance ordered by impact. Apply in order — each step compounds on the previous:
 
 1. **Remove translation / QEMU** (priority 1): If running under Rosetta or QEMU cross-architecture emulation, switch to native binaries or a native-arch engine. For Colima x86_64 on Apple Silicon, create a non-destructive benchmark profile:
+
    ```bash
    colima start --profile benchlab --arch aarch64 --vm-type vz --cpu 4 --memory 8
    docker context use colima-benchlab
