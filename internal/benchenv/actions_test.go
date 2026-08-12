@@ -182,3 +182,62 @@ func TestColimaBenchProfileCmd(t *testing.T) {
 		t.Error("expected --vm-type vz")
 	}
 }
+
+func TestColimaProfileFromContext(t *testing.T) {
+	tests := []struct {
+		ctxName  string
+		endpoint string
+		want     string
+	}{
+		{"colima", "unix:///foo", "default"},
+		{"colima-benchlab", "unix:///foo", "benchlab"},
+		{"colima", "unix:///Users/foo/.colima/benchlab/docker.sock", "benchlab"},
+		{"colima-x86", "unix:///Users/foo/.colima-x86/docker.sock", "x86"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ctxName+"/"+tt.endpoint, func(t *testing.T) {
+			if got := colimaProfileFromContext(tt.ctxName, tt.endpoint); got != tt.want {
+				t.Errorf("colimaProfileFromContext(%q, %q) = %q, want %q", tt.ctxName, tt.endpoint, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsDockerEngine(t *testing.T) {
+	tests := []struct {
+		ctxName  string
+		osString string
+		want     bool
+	}{
+		{"default", "Ubuntu 22.04.3 LTS", true},
+		{"", "Ubuntu 22.04.3 LTS", true},
+		{"default", "Docker Desktop", false},
+		{"default", "Podman Engine", false},
+		{"colima", "Ubuntu 22.04.3 LTS", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.ctxName+"/"+tt.osString, func(t *testing.T) {
+			if got := isDockerEngine(tt.ctxName, tt.osString); got != tt.want {
+				t.Errorf("isDockerEngine(%q, %q) = %v, want %v", tt.ctxName, tt.osString, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMachineArch(t *testing.T) {
+	tests := []struct {
+		plat Platform
+		want string
+	}{
+		{Platform{Arch: "amd64", RawArch: "arm64"}, "arm64"},
+		{Platform{Arch: "arm64", RawArch: ""}, "arm64"},
+		{Platform{Arch: "amd64", RawArch: "x86_64"}, "amd64"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.plat.Arch+"/"+tt.plat.RawArch, func(t *testing.T) {
+			if got := machineArch(tt.plat); got != tt.want {
+				t.Errorf("machineArch() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

@@ -157,12 +157,14 @@ func (p *prober) verifyCgroupV2(probe *IsolationProbe, lines []string, selectedC
 	probe.MemoryMax = memMax
 	probe.MemorySwapMax = swapMax
 
-	// Check: selected CPU is in the effective cpuset.
-	if !cpuInSet(selectedCPU, effCPUSet) {
+	// Check: effective cpuset must be exactly one CPU and contain the
+	// selected CPU. A set like "0-7" passes a containment check but
+	// defeats the claimed isolation.
+	if !isSingleCPUSet(effCPUSet, selectedCPU) {
 		probe.Findings = append(probe.Findings, Check{
 			Name:   "cpuset isolation",
 			Status: StatusWarn,
-			Detail: fmt.Sprintf("selected CPU %d not in effective cpuset %q", selectedCPU, effCPUSet),
+			Detail: fmt.Sprintf("effective cpuset %q is not pinned to a single CPU (selected %d)", effCPUSet, selectedCPU),
 			Remedy: fmt.Sprintf("docker run --cpuset-cpus=%d ...", selectedCPU),
 		})
 	}
@@ -237,12 +239,13 @@ func (p *prober) verifyCgroupV1(probe *IsolationProbe, lines []string, selectedC
 	probe.MemoryMax = memLimit
 	probe.MemorySwapMax = memswLimit
 
-	// Check: selected CPU is in the effective cpuset.
-	if !cpuInSet(selectedCPU, effCPUSet) {
+	// Check: effective cpuset must be exactly one CPU and contain the
+	// selected CPU.
+	if !isSingleCPUSet(effCPUSet, selectedCPU) {
 		probe.Findings = append(probe.Findings, Check{
 			Name:   "cpuset isolation",
 			Status: StatusWarn,
-			Detail: fmt.Sprintf("selected CPU %d not in effective cpuset %q", selectedCPU, effCPUSet),
+			Detail: fmt.Sprintf("effective cpuset %q is not pinned to a single CPU (selected %d)", effCPUSet, selectedCPU),
 			Remedy: fmt.Sprintf("docker run --cpuset-cpus=%d ...", selectedCPU),
 		})
 	}
@@ -315,6 +318,7 @@ func (p *prober) inspectCurrentContainer() *IsolationProbe {
 			probe.MemorySwapMax = strings.TrimSpace(swapMax)
 		}
 		probe.Findings = p.analyzeCurrentContainerV2(probe)
+		probe.Passed = len(probe.Findings) == 0 && probe.Error == ""
 		return probe
 	}
 
@@ -332,6 +336,7 @@ func (p *prober) inspectCurrentContainer() *IsolationProbe {
 			probe.MemorySwapMax = strings.TrimSpace(memsw)
 		}
 		probe.Findings = p.analyzeCurrentContainerV1(probe)
+		probe.Passed = len(probe.Findings) == 0 && probe.Error == ""
 		return probe
 	}
 
@@ -451,6 +456,12 @@ func (p *prober) analyzeCurrentContainerV1(probe *IsolationProbe) []Check {
 
 // looksPinned reports whether a cpuset string represents a single pinned CPU.
 func looksPinned(cpuset string, numCPU int) bool {
+	return isSingleCPUSet(cpuset, -1)
+}
+
+// isSingleCPUSet reports whether a cpuset string represents exactly one
+// CPU, and (when selectedCPU >= 0) that it is the selected CPU.
+func isSingleCPUSet(cpuset string, selectedCPU int) bool {
 	cpuset = strings.TrimSpace(cpuset)
 	if cpuset == "" {
 		return false
@@ -461,12 +472,25 @@ func looksPinned(cpuset string, numCPU int) bool {
 		return false
 	}
 	rangeParts := strings.SplitN(parts[0], "-", 2)
-	if len(rangeParts) == 1 {
-		return true // single CPU like "3"
+	start, err := strconv.Atoi(strings.TrimSpace(rangeParts[0]))
+	if err != nil {
+		return false
 	}
-	start, _ := strconv.Atoi(rangeParts[0])
-	end, _ := strconv.Atoi(rangeParts[1])
-	return start == end // range of exactly one CPU
+	end := start
+	if len(rangeParts) == 2 {
+		if e, err := strconv.Atoi(strings.TrimSpace(rangeParts[1])); err == nil {
+			end = e
+		} else {
+			return false
+		}
+	}
+	if start != end {
+		return false // range of more than one CPU
+	}
+	if selectedCPU >= 0 && start != selectedCPU {
+		return false
+	}
+	return true
 }
 
 // firstCPU parses a cpuset string and returns the first CPU number.

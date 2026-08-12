@@ -10,6 +10,11 @@ func TestGradeNative(t *testing.T) {
 		want      PathGrade
 	}{
 		{
+			"containerized Linux",
+			Platform{OS: "linux", Arch: "arm64", Virtualization: "none", Translation: "none", Containerized: true},
+			false, GradeLimited,
+		},
+		{
 			"bare-metal Linux no warns",
 			Platform{OS: "linux", Arch: "arm64", Virtualization: "none", Translation: "none"},
 			false, GradeReady,

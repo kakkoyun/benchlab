@@ -54,7 +54,7 @@ func dockerRecipe(plat Platform, dkr Docker) string {
   --cpus=1 \
   --memory=%s \
   --memory-swap=%s \
-  -v $(pwd):/work -w /work \
+  -v "$(pwd)":/work -w /work \
   golang:1.24 \
   go test -bench=. -benchmem -count=10 -benchtime=2s ./...`, arch, cpu, memory, memory)
 }

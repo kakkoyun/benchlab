@@ -59,6 +59,7 @@ type Platform struct {
 	PowerMode      string  `json:"power_mode,omitempty"`
 	LoadAvg        float64 `json:"load_avg,omitempty"`
 	Thermal        string  `json:"thermal,omitempty"`
+	ThermalProbed  bool    `json:"thermal_probed,omitempty"`
 	Evidence       string  `json:"evidence,omitempty"`
 }
 

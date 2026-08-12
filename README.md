@@ -132,7 +132,7 @@ Readiness
 
 - **Linux native**: `taskset -c 0 perflock go test -bench=. -benchmem -count=10 -benchtime=2s ./...`
 - **macOS native**: `go test -bench=. -benchmem -count=20 -benchtime=2s ./...` (higher sample count, higher noise warning)
-- **Local Docker**: `docker run --rm --network=none --platform=linux/arm64 --cpuset-cpus=0 --cpus=1 --memory=512m --memory-swap=512m -v $(pwd):/work -w /work golang:1.24 go test -bench=. ...`
+- **Local Docker**: `docker run --rm --network=none --platform=linux/arm64 --cpuset-cpus=0 --cpus=1 --memory=512m --memory-swap=512m -v "$(pwd)":/work -w /work golang:1.24 go test -bench=. ...`
 
 ## Agent skills
 

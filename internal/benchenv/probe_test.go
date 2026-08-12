@@ -105,6 +105,30 @@ func TestLooksPinned(t *testing.T) {
 	}
 }
 
+func TestIsSingleCPUSet(t *testing.T) {
+	tests := []struct {
+		cpuset   string
+		selected int
+		want     bool
+	}{
+		{"0", 0, true},
+		{"0", -1, true},
+		{"3", 3, true},
+		{"3", 0, false},   // single CPU but not the selected one
+		{"0-3", 0, false}, // multi-CPU range
+		{"0,2", 0, false}, // multi-CPU list
+		{"", 0, false},
+		{"0-0", 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.cpuset, func(t *testing.T) {
+			if got := isSingleCPUSet(tt.cpuset, tt.selected); got != tt.want {
+				t.Errorf("isSingleCPUSet(%q, %d) = %v, want %v", tt.cpuset, tt.selected, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestRunIsolationProbeV2Passing verifies a passing cgroup v2 probe.
 func TestRunIsolationProbeV2Passing(t *testing.T) {
 	exec := &fakeExec{
@@ -141,6 +165,42 @@ func TestRunIsolationProbeV2Passing(t *testing.T) {
 	}
 	if probe.SelectedCPU != "0" {
 		t.Errorf("selected CPU = %q, want 0", probe.SelectedCPU)
+	}
+}
+
+// TestRunIsolationProbeV2FailingCPUSet verifies a failing cgroup v2 probe
+// where the effective cpuset spans multiple CPUs despite --cpuset-cpus.
+func TestRunIsolationProbeV2FailingCPUSet(t *testing.T) {
+	exec := &fakeExec{
+		runFn: func(name string, args ...string) (string, error) {
+			constrained := false
+			for _, a := range args {
+				if a == "--cpuset-cpus=0" {
+					constrained = true
+				}
+			}
+			if !constrained {
+				return "0-7\n", nil
+			}
+			// Effective cpuset is 0-7 despite requesting CPU 0.
+			return "v2\n0-7\n100000 100000\n134217728\n0\n", nil
+		},
+	}
+	p := newProber(withExec(exec), withFS(&fakeFS{}), withOS("linux"), withArch("arm64"), withNumCPU(8))
+	dkr := Docker{Available: true, Local: true, EngineArch: "arm64"}
+	probe := p.runIsolationProbe(dkr, Platform{OS: "linux", Arch: "arm64"})
+
+	if probe.Passed {
+		t.Error("expected probe to fail (multi-CPU cpuset)")
+	}
+	found := false
+	for _, f := range probe.Findings {
+		if f.Name == "cpuset isolation" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected cpuset isolation finding")
 	}
 }
 

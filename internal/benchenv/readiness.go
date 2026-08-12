@@ -45,6 +45,12 @@ func isHostNoiseCheck(c Check) bool {
 
 // gradeNative grades the native (non-containerized) benchmarking path.
 func gradeNative(plat Platform, hostNoiseWarns bool) PathGrade {
+	// A containerized process cannot be treated as bare-metal native.
+	// Its isolation must be graded from the inspected cgroup evidence
+	// (handled in gradeDocker), not as a native path.
+	if plat.Containerized {
+		return GradeLimited
+	}
 	// Cross-architecture/translation is a fixable hazard.
 	if plat.Translation == "rosetta" || plat.Translation == "qemu" {
 		return GradeNotReady
@@ -63,6 +69,22 @@ func gradeNative(plat Platform, hostNoiseWarns bool) PathGrade {
 
 // gradeDocker grades the Docker benchmarking path.
 func gradeDocker(plat Platform, dkr Docker, hostNoiseWarns bool) PathGrade {
+	// When benchenv is itself containerized, the Docker path is the
+	// current-container path. Grade from the inspected cgroup evidence.
+	if plat.Containerized {
+		if dkr.Isolation == nil || !dkr.Isolation.Ran {
+			return GradeLimited
+		}
+		if dkr.Isolation.Error != "" {
+			return GradeNotReady
+		}
+		if !dkr.Isolation.Passed {
+			return GradeNotReady
+		}
+		// Passing cgroup limits but still inside a container — limited.
+		return GradeLimited
+	}
+
 	if !dkr.Available {
 		return GradeUnavailable
 	}

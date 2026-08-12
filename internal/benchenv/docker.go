@@ -69,11 +69,12 @@ func (p *prober) detectDocker(plat Platform) Docker {
 	dkr.EngineOS = info.OSType
 	dkr.EngineArch = normalizeArch(info.Architecture)
 
-	// Context and endpoint.
+	// Context and endpoint. Resolve the effective endpoint using Docker's
+	// override precedence: DOCKER_HOST > active context > default.
 	ctxName, endpoint := p.dockerContextInfo()
 	dkr.Context = ctxName
 	dkr.Endpoint = endpoint
-	dkr.Local = isLocalEndpoint(endpoint)
+	dkr.Local = isLocalEndpoint(p.effectiveDockerEndpoint(endpoint))
 
 	// Backend detection.
 	dkr.Backend, dkr.VMResources, dkr.Translation = p.detectBackend(ctxName, endpoint, info, plat)
@@ -104,6 +105,34 @@ func (p *prober) dockerContextInfo() (name, endpoint string) {
 		}
 	}
 	return name, endpoint
+}
+
+// effectiveDockerEndpoint resolves the effective Docker endpoint using
+// Docker's override precedence: DOCKER_HOST env var > context endpoint >
+// default unix socket. This prevents a remote DOCKER_HOST from being
+// mistaken for a local daemon.
+func (p *prober) effectiveDockerEndpoint(ctxEndpoint string) string {
+	if host := p.envVar("DOCKER_HOST"); host != "" {
+		return host
+	}
+	if ctxEndpoint != "" {
+		return ctxEndpoint
+	}
+	return "" // default unix socket
+}
+
+// envVar reads an environment variable via the prober's exec seam.
+func (p *prober) envVar(name string) string {
+	out, err := p.run("env")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, name+"=") {
+			return strings.TrimPrefix(line, name+"=")
+		}
+	}
+	return ""
 }
 
 // dockerEngineInfo parses key fields from `docker info`.
@@ -153,7 +182,7 @@ func isLocalEndpoint(endpoint string) bool {
 func (p *prober) detectBackend(ctxName, endpoint string, info dockerInfo, plat Platform) (backend string, vm VMResources, translation string) {
 	// Colima: context name or socket path contains "colima".
 	if isColima(ctxName, endpoint) {
-		return p.detectColimaBackend(info, plat)
+		return p.detectColimaBackend(ctxName, endpoint, info, plat)
 	}
 
 	// Docker Desktop: context name or OS string indicates it.
@@ -161,20 +190,57 @@ func (p *prober) detectBackend(ctxName, endpoint string, info dockerInfo, plat P
 		return p.detectDockerDesktopBackend(info, plat)
 	}
 
-	// Native Docker Engine on Linux.
-	if p.os == "linux" && info.OSType == "linux" {
+	// Native Docker Engine on Linux: require positive identity evidence.
+	// A Linux-compatible daemon (e.g. Podman) is not necessarily Docker
+	// Engine; only label it "engine" when the OS string or context
+	// explicitly identifies Docker Engine.
+	if p.os == "linux" && info.OSType == "linux" && isDockerEngine(ctxName, info.OperatingSystem) {
 		vm = VMResources{CPUs: info.NCPU}
-		translation = computeDockerTranslation(info.Architecture, plat.Arch)
+		translation = computeDockerTranslation(info.Architecture, machineArch(plat))
 		return "engine", vm, translation
 	}
 
 	// Unknown backend.
 	vm = VMResources{CPUs: info.NCPU}
-	translation = computeDockerTranslation(info.Architecture, plat.Arch)
+	translation = computeDockerTranslation(info.Architecture, machineArch(plat))
 	return "unknown", vm, translation
 }
 
-// isColima reports whether the Docker context or endpoint indicates Colima.
+// isDockerEngine reports whether the context or OS string positively
+// identifies a native Docker Engine (as opposed to a Docker-compatible
+// daemon like Podman).
+func isDockerEngine(ctxName, osString string) bool {
+	lower := strings.ToLower(osString)
+	// Docker Engine reports OS strings like "Ubuntu 22.04.3 LTS" or
+	// "Alpine Linux v3.20" without "Docker Desktop". Podman reports
+	// "Podman Engine" or similar. Require the absence of competing
+	// product names and presence of a Linux distribution signature.
+	if strings.Contains(lower, "docker desktop") {
+		return false
+	}
+	if strings.Contains(lower, "podman") {
+		return false
+	}
+	if strings.Contains(lower, "colima") {
+		return false
+	}
+	// Docker Engine on Linux reports the host distribution; a bare
+	// distribution name is positive evidence for native Engine.
+	if ctxName == "default" || ctxName == "" {
+		return true
+	}
+	return false
+}
+
+// machineArch returns the normalized machine architecture, preferring
+// RawArch (from uname -m) over the process architecture. This avoids
+// false QEMU translation when benchenv runs under Rosetta.
+func machineArch(plat Platform) string {
+	if plat.RawArch != "" {
+		return normalizeArch(plat.RawArch)
+	}
+	return plat.Arch
+}
 func isColima(ctxName, endpoint string) bool {
 	if strings.HasPrefix(strings.ToLower(ctxName), "colima") {
 		return true
@@ -199,27 +265,37 @@ func isDockerDesktop(ctxName, osString string) bool {
 }
 
 // detectColimaBackend uses `colima status --json` to identify the driver and arch.
-func (p *prober) detectColimaBackend(info dockerInfo, plat Platform) (string, VMResources, string) {
+// It derives the profile name from the active Colima context so it queries
+// the correct VM, not always the default profile.
+func (p *prober) detectColimaBackend(ctxName, endpoint string, info dockerInfo, plat Platform) (string, VMResources, string) {
 	vm := VMResources{CPUs: info.NCPU}
 	if info.MemTotal > 0 {
 		vm.Memory = formatBytes(info.MemTotal)
 	}
 
+	hostArch := machineArch(plat)
+
 	if err := p.exec.LookPath("colima"); err != nil {
 		// Colima not on PATH; infer from engine arch.
-		translation := computeDockerTranslation(info.Architecture, plat.Arch)
+		translation := computeDockerTranslation(info.Architecture, hostArch)
 		return "colima-unknown", vm, translation
 	}
 
-	out, err := p.run("colima", "status", "--json")
+	profile := colimaProfileFromContext(ctxName, endpoint)
+	statusArgs := []string{"status", "--json"}
+	if profile != "" && profile != "default" {
+		statusArgs = append(statusArgs, profile)
+	}
+
+	out, err := p.run("colima", statusArgs...)
 	if err != nil {
-		translation := computeDockerTranslation(info.Architecture, plat.Arch)
+		translation := computeDockerTranslation(info.Architecture, hostArch)
 		return "colima-unknown", vm, translation
 	}
 
 	var st colimaStatus
 	if jerr := json.Unmarshal([]byte(out), &st); jerr != nil {
-		translation := computeDockerTranslation(info.Architecture, plat.Arch)
+		translation := computeDockerTranslation(info.Architecture, hostArch)
 		return "colima-unknown", vm, translation
 	}
 
@@ -240,17 +316,39 @@ func (p *prober) detectColimaBackend(info dockerInfo, plat Platform) (string, VM
 		backend = "colima-unknown"
 	}
 
-	// Translation: QEMU driver with cross-arch means emulation.
+	// Translation: compare Colima VM arch against the *machine* arch
+	// (not the process arch, which is amd64 under Rosetta).
 	colimaArch := normalizeArch(st.Arch)
 	translation := "none"
-	if colimaArch != "" && colimaArch != plat.Arch {
+	if colimaArch != "" && colimaArch != hostArch {
 		translation = "qemu"
-	} else if strings.ToLower(st.Driver) == "qemu" && colimaArch == plat.Arch {
+	} else if strings.ToLower(st.Driver) == "qemu" && colimaArch == hostArch {
 		// Native arch but QEMU driver — still native execution.
 		translation = "none"
 	}
 
 	return backend, vm, translation
+}
+
+// colimaProfileFromContext extracts the Colima profile name from a Docker
+// context name or socket path. Colima contexts are named "colima-<profile>"
+// or "colima" (default); socket paths contain ".colima/<profile>/".
+func colimaProfileFromContext(ctxName, endpoint string) string {
+	// Prefer the endpoint path, which unambiguously identifies the profile.
+	if idx := strings.Index(endpoint, ".colima/"); idx >= 0 {
+		rest := endpoint[idx+len(".colima/"):]
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			return rest[:slash]
+		}
+	}
+	// Fall back to the context name.
+	name := strings.ToLower(strings.TrimSpace(ctxName))
+	name = strings.TrimPrefix(name, "colima-")
+	name = strings.TrimPrefix(name, "colima")
+	if name == "" {
+		return "default"
+	}
+	return name
 }
 
 // detectDockerDesktopBackend reads Docker Desktop settings to identify the
@@ -261,18 +359,13 @@ func (p *prober) detectDockerDesktopBackend(info dockerInfo, plat Platform) (str
 		vm.Memory = formatBytes(info.MemTotal)
 	}
 
-	translation := computeDockerTranslation(info.Architecture, plat.Arch)
+	hostArch := machineArch(plat)
+	translation := computeDockerTranslation(info.Architecture, hostArch)
 
 	// Try to read Docker Desktop settings for the backend type.
 	backend := p.dockerDesktopBackendFromSettings()
 	if backend == "" {
 		backend = "docker-desktop-unknown"
-	}
-
-	// If the engine arch differs from the host arch, it is translated.
-	if translation != "none" {
-		// Cross-architecture on Docker Desktop is QEMU/Rosetta emulation.
-		// Keep the backend label but note translation separately.
 	}
 
 	return backend, vm, translation
@@ -292,18 +385,19 @@ func (p *prober) dockerDesktopBackendFromSettings() string {
 }
 
 // classifyDockerDesktopSettings inspects the settings JSON text for known
-// backend indicators. Returns "" if no recognized pattern is found.
+// backend indicators. Distinguishes Docker VMM (useVmm) from Apple's
+// Virtualization.framework (useVirtualizationFramework) and does not infer
+// QEMU from a false flag alone. Returns "" when evidence is ambiguous.
 func classifyDockerDesktopSettings(data string) string {
-	// Look for the virtualization framework setting. Docker Desktop has
-	// used different key names across versions; check common ones.
-	if strings.Contains(data, "\"useVmm\":true") ||
-		strings.Contains(data, "\"useVirtualizationFramework\":true") {
+	hasVmm := strings.Contains(data, "\"useVmm\":true")
+	hasVFF := strings.Contains(data, "\"useVirtualizationFramework\":true")
+	if hasVmm {
+		return "docker-desktop-vmm"
+	}
+	if hasVFF {
 		return "docker-desktop-apple"
 	}
-	if strings.Contains(data, "\"useVmm\":false") ||
-		strings.Contains(data, "\"useVirtualizationFramework\":false") {
-		return "docker-desktop-qemu"
-	}
+	// A false flag alone does not prove QEMU; fall back to unknown.
 	return ""
 }
 

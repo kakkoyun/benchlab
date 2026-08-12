@@ -32,10 +32,16 @@ func buildActions(plat Platform, dkr Docker, readiness Readiness, numCPU int) []
 			"GOARCH=arm64 go test -bench=. -count=10 ./...")
 	}
 	if dkr.Available && dkr.Translation == "qemu" {
-		add(1, "docker",
-			"Docker engine architecture differs from host — containers run under QEMU emulation",
-			colimaBenchProfileCmd(),
-			"docker context use colima-benchlab")
+		if strings.HasPrefix(dkr.Backend, "colima") && plat.OS == "darwin" {
+			add(1, "docker",
+				"Docker engine architecture differs from host — containers run under QEMU emulation",
+				colimaBenchProfileCmd(),
+				"docker context use colima-benchlab")
+		} else {
+			add(1, "docker",
+				"Docker engine architecture differs from host — containers run under QEMU emulation",
+				"# Use a Docker engine matching the host architecture to avoid QEMU emulation")
+		}
 	}
 
 	// Priority 2: Move to certifiable hardware.

@@ -88,6 +88,14 @@ func renderDocker(dkr Docker) string {
 			fmt.Fprintf(&b, " — %s", dkr.UnavailableMsg)
 		}
 		b.WriteString("\n")
+		// When containerized, render the current-container isolation
+		// inspection even when Docker CLI/daemon is unavailable.
+		if dkr.Containerized {
+			fmt.Fprintf(&b, "  containerized: yes\n")
+			if dkr.Isolation != nil {
+				b.WriteString(renderIsolation(dkr.Isolation))
+			}
+		}
 		return b.String()
 	}
 

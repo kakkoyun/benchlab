@@ -124,10 +124,10 @@ func TestClassifyDockerDesktopSettings(t *testing.T) {
 		json string
 		want string
 	}{
-		{`{"useVmm":true}`, "docker-desktop-apple"},
+		{`{"useVmm":true}`, "docker-desktop-vmm"},
 		{`{"useVirtualizationFramework":true}`, "docker-desktop-apple"},
-		{`{"useVmm":false}`, "docker-desktop-qemu"},
-		{`{"useVirtualizationFramework":false}`, "docker-desktop-qemu"},
+		{`{"useVmm":false}`, ""},                     // false flag alone does not prove QEMU
+		{`{"useVirtualizationFramework":false}`, ""}, // false flag alone does not prove QEMU
 		{`{"otherSetting":42}`, ""},
 		{`{}`, ""},
 	}

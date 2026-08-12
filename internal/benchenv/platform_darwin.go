@@ -45,7 +45,7 @@ func (p *prober) detectPlatform() Platform {
 	}
 
 	// Thermal warnings via pmset.
-	plat.Thermal = p.darwinThermal()
+	plat.Thermal, plat.ThermalProbed = p.darwinThermal()
 
 	plat.Evidence = "uname, sysctl proc_translated, pmset"
 	return plat
@@ -78,13 +78,14 @@ func (p *prober) darwinPowerMode() string {
 	return parseDarwinPowerMode(out)
 }
 
-// darwinThermal reports thermal pressure if available.
-func (p *prober) darwinThermal() string {
+// darwinThermal reports thermal pressure if available. Returns the
+// description and whether the probe succeeded.
+func (p *prober) darwinThermal() (string, bool) {
 	out, err := p.run("pmset", "-g", "therm")
 	if err != nil {
-		return ""
+		return "", false
 	}
-	return parseDarwinThermal(out)
+	return parseDarwinThermal(out), true
 }
 
 // darwinChecks returns macOS-specific checks.
@@ -160,7 +161,13 @@ func (p *prober) platformChecks(plat Platform) []Check {
 	})
 
 	// Thermal warnings.
-	if plat.Thermal != "" {
+	if !plat.ThermalProbed {
+		checks = append(checks, Check{
+			Name:   "thermal pressure",
+			Status: StatusUnavailable,
+			Detail: "could not query thermal state via pmset",
+		})
+	} else if plat.Thermal != "" {
 		checks = append(checks, Check{
 			Name:   "thermal pressure",
 			Status: StatusWarn,
