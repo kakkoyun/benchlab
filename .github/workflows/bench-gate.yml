@@ -1,0 +1,135 @@
+# A PR gate that actually fails: companion to part 4 of the Go benchmarks series.
+#
+# One job builds the base and head benchmark binaries, runs them interleaved
+# (ABAB), and fails on a regression that benchstat calls real. benchgate rules
+# out an unstable sample first.
+name: bench-gate
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  BENCHSTAT_VERSION: v0.0.0-20260929162123-406019bb8b68
+  BENCHGATE_VERSION: v0.1.0
+  BENCH_PKG: ./internal/sum
+  # ROUNDS is both the number of ABAB rounds and the sample count per side (n).
+  ROUNDS: "10"
+  BENCHTIME: 200ms
+  # Block only when benchstat says the delta is real (p < 0.05) AND at least this large.
+  MIN_DELTA_PCT: "5"
+  # benchgate fails the sample when any benchmark's coefficient of variation is above this.
+  CV_THRESHOLD: "10"
+
+jobs:
+  bench-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # pull_request checks out the merge commit, so HEAD^1 is the base tip and
+      # HEAD is what would land. Depth 2 is enough to reach both.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      - name: Install benchstat and benchgate
+        run: |
+          export GOBIN="$RUNNER_TEMP/bin"
+          go install "golang.org/x/perf/cmd/benchstat@${BENCHSTAT_VERSION}"
+          go install "github.com/kakkoyun/benchlab/cmd/benchgate@${BENCHGATE_VERSION}"
+
+      - name: Build base and head benchmark binaries
+        run: |
+          if [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -ne 3 ]; then
+            echo "::error::HEAD is not a merge commit; expected the pull_request merge ref"
+            exit 2
+          fi
+          mkdir -p "$RUNNER_TEMP/bench"
+          git worktree add --detach "$RUNNER_TEMP/base" HEAD^1
+          echo "base: $(git rev-parse --short HEAD^1)  head: $(git rev-parse --short HEAD)"
+          go test -c -o "$RUNNER_TEMP/bench/head.test" "$BENCH_PKG"
+          (cd "$RUNNER_TEMP/base" && go test -c -o "$RUNNER_TEMP/bench/base.test" "$BENCH_PKG")
+
+      - name: Run base and head interleaved (ABAB)
+        run: |
+          pkgdir="${BENCH_PKG#./}"
+          : > "$RUNNER_TEMP/bench/base.txt"
+          : > "$RUNNER_TEMP/bench/head.txt"
+          for round in $(seq 1 "$ROUNDS"); do
+            for side in base head; do
+              root="$RUNNER_TEMP/base"
+              if [ "$side" = head ]; then root="$GITHUB_WORKSPACE"; fi
+              echo "round $round: $side"
+              (cd "$root/$pkgdir" && "$RUNNER_TEMP/bench/$side.test" \
+                -test.run='^$' -test.bench=. -test.benchtime="$BENCHTIME" -test.count=1) \
+                >> "$RUNNER_TEMP/bench/$side.txt"
+            done
+          done
+
+      - name: Compare with benchstat
+        run: |
+          cd "$RUNNER_TEMP/bench"
+          benchstat="$RUNNER_TEMP/bin/benchstat"
+          "$benchstat" base.txt head.txt
+          "$benchstat" -format csv base.txt head.txt > compare.csv
+          # Rows are "name,base,CI,head,CI,delta,P". Gate on the sec/op table only; the delta
+          # column holds "~" when benchstat sees noise, so only a signed percentage can match.
+          awk -F, -v floor="$MIN_DELTA_PCT" '
+            $1 == "" && NF > 1 { gate = ($2 == "sec/op"); next }
+            gate && $1 != "geomean" && $4 != "" { compared++ }
+            gate && $1 != "geomean" && $6 ~ /^\+[0-9.]+%$/ && substr($6, 2) + 0 >= floor {
+              printf "%s %s (%s)\n", $1, $6, $7 > "regressions.txt"
+            }
+            END { print compared + 0 > "compared.count" }
+          ' compare.csv
+          touch regressions.txt
+
+      - name: Check sample stability with benchgate
+        run: |
+          cd "$RUNNER_TEMP/bench"
+          # Exit codes: 0 stable, 1 unstable (CV over threshold), 2 error. Record it
+          # instead of failing here, so the verdict step can report everything at once.
+          rc=0
+          (cd "$GITHUB_WORKSPACE" && "$RUNNER_TEMP/bin/benchgate" \
+            -pkg "$BENCH_PKG" -count "$ROUNDS" -benchtime "$BENCHTIME" \
+            -cv-threshold "$CV_THRESHOLD") || rc=$?
+          echo "$rc" > benchgate.rc
+
+      - name: Gate verdict
+        run: |
+          cd "$RUNNER_TEMP/bench"
+          compared="$(cat compared.count)"
+          benchgate_rc="$(cat benchgate.rc)"
+          # Exit codes: 0 pass, 1 regression, 2 tool error, 3 unstable sample.
+          if [ "$compared" -eq 0 ]; then
+            echo "::error title=Nothing compared::benchstat found no benchmark present in both base and head"
+            exit 2
+          fi
+          status=0
+          case "$benchgate_rc" in
+            0) ;;
+            1)
+              echo "::error title=Unstable sample::benchgate exit 1: a benchmark's CV is above ${CV_THRESHOLD}%; the run cannot support a verdict"
+              status=3
+              ;;
+            *)
+              echo "::error title=benchgate failed::benchgate exit ${benchgate_rc}"
+              exit 2
+              ;;
+          esac
+          if [ -s regressions.txt ]; then
+            while read -r line; do
+              echo "::error title=Benchmark regression::${line}"
+            done < regressions.txt
+            status=1
+          fi
+          echo "verdict: exit ${status}"
+          exit "$status"
